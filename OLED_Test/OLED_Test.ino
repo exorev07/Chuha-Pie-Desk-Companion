@@ -1,5 +1,5 @@
 /*
- * ESP32 Animated Eyes - Mochi Inspired
+ * ESP32 Animated Eyes - Mochi Inspired with Touch Control
  * 
  * Pin Connections:
  * OLED GND  -> ESP32 GND
@@ -9,6 +9,11 @@
  * OLED RES  -> ESP32 GPIO 4 (Reset)
  * OLED DC   -> ESP32 GPIO 2 (Data/Command)
  * OLED CS   -> ESP32 GPIO 5 (Chip Select)
+ * 
+ * TTP223 Touch Sensor:
+ * TTP223 VCC -> ESP32 3.3V
+ * TTP223 GND -> ESP32 GND
+ * TTP223 SIG -> ESP32 GPIO 15
  */
 
 #include <Wire.h>
@@ -26,6 +31,7 @@
 #define OLED_DC     2
 #define OLED_CS     5
 #define OLED_RESET  4
+#define TOUCH_PIN   15  // TTP223 touch sensor
 
 // Eye parameters
 #define EYE_RADIUS 15
@@ -46,6 +52,12 @@ int pupilOffsetY = 0;
 int blinkState = 0;
 unsigned long lastBlinkTime = 0;
 unsigned long blinkInterval = 3000;
+// Touch sensor state
+int currentEmotion = 0;  // 0=normal, 1=happy, 2=surprised, 3=sleepy, 4=heart
+bool touchDetected = false;
+bool lastTouchState = false;
+unsigned long lastTouchTime = 0;
+
 
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT,
   OLED_MOSI, OLED_CLK, OLED_DC, OLED_RESET, OLED_CS);
@@ -64,42 +76,98 @@ void setup() {
   display.display();
   delay(500);
   
+  // Setup touch sensor
+  pinMode(TOUCH_PIN, INPUT);
+  Serial.println("Touch sensor ready!");
+  
   randomSeed(analogRead(0));
 }
 
 void loop() {
-  // Random behaviors
-  int behavior = random(0, 6);
+  // Check touch sensor
+  checkTouch();
   
-  switch(behavior) {
-    case 0:
-      lookAround();
-      break;
-    case 1:
-      blinkEyes();
-      delay(500);
-      break;
-    case 2:
-      happyEyes();
-      delay(2000);
-      break;
-    case 3:
-      surprisedEyes();
-      delay(1500);
-      break;
-    case 4:
-      sleepyEyes();
-      delay(2000);
-      break;
-    case 5:
-      heartEyes();
-      delay(2000);
-      break;
+  // If touch detected, show selected emotion
+  if (touchDetected && millis() - lastTouchTime < 3000) {
+    showEmotionByTouch();
+  } else {
+    // Random autonomous behaviors when not touched
+    int behavior = random(0, 6);
+    
+    switch(behavior) {
+      case 0:
+        lookAround();
+        break;
+      case 1:
+        blinkEyes();
+        delay(500);
+        break;
+      case 2:
+        happyEyes();
+        delay(2000);
+        break;
+      case 3:
+        surprisedEyes();
+        delay(1500);
+        break;
+      case 4:
+        sleepyEyes();
+        delay(2000);
+        break;
+      case 5:
+        heartEyes();
+        delay(2000);
+        break;
+    }
+    
+    // Normal eyes between behaviors
+    drawNormalEyes();
+    delay(random(500, 1500));
+  }
+}
+
+void checkTouch() {
+  bool currentTouch = digitalRead(TOUCH_PIN);
+  
+  // Detect rising edge (touch event)
+  if (currentTouch && !lastTouchState) {
+    touchDetected = true;
+    lastTouchTime = millis();
+    
+    // Cycle to next emotion
+    currentEmotion++;
+    if (currentEmotion > 4) {
+      currentEmotion = 0;
+    }
+    
+    Serial.print("Touch detected! Emotion: ");
+    Serial.println(currentEmotion);
+    
+    delay(200); // Debounce
   }
   
-  // Normal eyes between behaviors
-  drawNormalEyes();
-  delay(random(500, 1500));
+  lastTouchState = currentTouch;
+}
+
+void showEmotionByTouch() {
+  switch(currentEmotion) {
+    case 0:
+      drawNormalEyes();
+      break;
+    case 1:
+      happyEyes();
+      break;
+    case 2:
+      surprisedEyes();
+      break;
+    case 3:
+      sleepyEyes();
+      break;
+    case 4:
+      heartEyes();
+      break;
+  }
+  delay(100);
 }
 
 void drawNormalEyes() {
