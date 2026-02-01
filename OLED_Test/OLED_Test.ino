@@ -44,19 +44,33 @@ int leftEyeY = 32;
 int rightEyeX = 94;
 int rightEyeY = 32;
 
-// Pupil positions (offset from center)
-int pupilOffsetX = 0;
-int pupilOffsetY = 0;
+// Pupil positions (offset from center) - with smooth tracking
+float pupilOffsetX = 0;
+float pupilOffsetY = 0;
+float targetPupilX = 0;
+float targetPupilY = 0;
+
+// Eye squash and stretch for organic animation
+float leftEyeScaleX = 1.0;
+float leftEyeScaleY = 1.0;
+float rightEyeScaleX = 1.0;
+float rightEyeScaleY = 1.0;
 
 // Blink state
 int blinkState = 0;
 unsigned long lastBlinkTime = 0;
 unsigned long blinkInterval = 3000;
+unsigned long lastIdleTime = 0;
+unsigned long idleInterval = 2000;
+
 // Touch sensor state
 int currentEmotion = 0;  // 0=normal, 1=happy, 2=surprised, 3=sleepy, 4=heart
 bool touchDetected = false;
 bool lastTouchState = false;
 unsigned long lastTouchTime = 0;
+
+// Idle animation state
+int idleState = 0;
 
 
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT,
@@ -87,42 +101,61 @@ void loop() {
   // Check touch sensor
   checkTouch();
   
+  // Smooth pupil tracking animation
+  smoothPupilMovement();
+  
   // If touch detected, show selected emotion
   if (touchDetected && millis() - lastTouchTime < 3000) {
     showEmotionByTouch();
   } else {
-    // Random autonomous behaviors when not touched
-    int behavior = random(0, 6);
-    
-    switch(behavior) {
-      case 0:
-        lookAround();
-        break;
-      case 1:
-        blinkEyes();
-        delay(500);
-        break;
-      case 2:
-        happyEyes();
-        delay(2000);
-        break;
-      case 3:
-        surprisedEyes();
-        delay(1500);
-        break;
-      case 4:
-        sleepyEyes();
-        delay(2000);
-        break;
-      case 5:
-        heartEyes();
-        delay(2000);
-        break;
+    // Organic idle behaviors
+    if (millis() - lastIdleTime > idleInterval) {
+      lastIdleTime = millis();
+      idleInterval = random(2000, 5000);
+      
+      int behavior = random(0, 10);
+      
+      switch(behavior) {
+        case 0:
+        case 1:
+          lookAroundSmooth();
+          break;
+        case 2:
+          blinkEyesSmooth();
+          break;
+        case 3:
+          curiousLook();
+          break;
+        case 4:
+          happyBounce();
+          break;
+        case 5:
+          excitedWiggle();
+          break;
+        case 6:
+          shyLook();
+          break;
+        case 7:
+          playfulWink();
+          break;
+        default:
+          // Just look around subtly
+          targetPupilX = random(-4, 5);
+          targetPupilY = random(-3, 4);
+          break;
+      }
     }
     
-    // Normal eyes between behaviors
-    drawNormalEyes();
-    delay(random(500, 1500));
+    // Auto blink occasionally
+    if (millis() - lastBlinkTime > blinkInterval) {
+      lastBlinkTime = millis();
+      blinkInterval = random(2000, 5000);
+      quickBlink();
+    }
+    
+    // Draw eyes continuously
+    drawNormalEyesSmooth();
+    delay(20); // Smooth 50fps animation
   }
 }
 
@@ -190,6 +223,67 @@ void drawNormalEyes() {
   display.display();
 }
 
+// Smooth animated eyes with organic movement
+void drawNormalEyesSmooth() {
+  display.clearDisplay();
+  
+  // Left eye with smooth scaling
+  int leftRadiusX = EYE_RADIUS * leftEyeScaleX;
+  int leftRadiusY = EYE_RADIUS * leftEyeScaleY;
+  drawEllipse(leftEyeX, leftEyeY, leftRadiusX, leftRadiusY, true);
+  
+  // Pupil
+  display.fillCircle(leftEyeX + (int)pupilOffsetX, leftEyeY + (int)pupilOffsetY, 
+                     PUPIL_RADIUS, SSD1306_BLACK);
+  display.fillCircle(leftEyeX + (int)pupilOffsetX - 3, leftEyeY + (int)pupilOffsetY - 3, 
+                     2, SSD1306_WHITE); // Light reflection
+  
+  // Right eye with smooth scaling
+  int rightRadiusX = EYE_RADIUS * rightEyeScaleX;
+  int rightRadiusY = EYE_RADIUS * rightEyeScaleY;
+  drawEllipse(rightEyeX, rightEyeY, rightRadiusX, rightRadiusY, true);
+  
+  // Pupil
+  display.fillCircle(rightEyeX + (int)pupilOffsetX, rightEyeY + (int)pupilOffsetY, 
+                     PUPIL_RADIUS, SSD1306_BLACK);
+  display.fillCircle(rightEyeX + (int)pupilOffsetX - 3, rightEyeY + (int)pupilOffsetY - 3, 
+                     2, SSD1306_WHITE); // Light reflection
+  
+  display.display();
+}
+
+// Smooth pupil tracking with easing
+void smoothPupilMovement() {
+  float easing = 0.15;
+  pupilOffsetX += (targetPupilX - pupilOffsetX) * easing;
+  pupilOffsetY += (targetPupilY - pupilOffsetY) * easing;
+  
+  // Reset scales smoothly
+  leftEyeScaleX += (1.0 - leftEyeScaleX) * 0.1;
+  leftEyeScaleY += (1.0 - leftEyeScaleY) * 0.1;
+  rightEyeScaleX += (1.0 - rightEyeScaleX) * 0.1;
+  rightEyeScaleY += (1.0 - rightEyeScaleY) * 0.1;
+}
+
+// Draw ellipse for organic eye shapes
+void drawEllipse(int cx, int cy, int rx, int ry, bool fill) {
+  if (rx == ry) {
+    if (fill) display.fillCircle(cx, cy, rx, SSD1306_WHITE);
+    else display.drawCircle(cx, cy, rx, SSD1306_WHITE);
+    return;
+  }
+  
+  for (int y = -ry; y <= ry; y++) {
+    int x = rx * sqrt(1.0 - (float)(y * y) / (ry * ry));
+    if (fill) {
+      display.drawLine(cx - x, cy + y, cx + x, cy + y, SSD1306_WHITE);
+    } else {
+      display.drawPixel(cx + x, cy + y, SSD1306_WHITE);
+      display.drawPixel(cx - x, cy + y, SSD1306_WHITE);
+    }
+  }
+}
+
 void lookAround() {
   // Look left
   animatePupilMovement(-5, 0, 300);
@@ -209,6 +303,129 @@ void lookAround() {
   
   // Back to center
   animatePupilMovement(0, 0, 300);
+}
+
+// Smooth organic looking around
+void lookAroundSmooth() {
+  int moves[][2] = {{-5, 0}, {-5, -3}, {0, -4}, {5, -3}, {5, 0}, {0, 0}};
+  
+  for (int i = 0; i < 6; i++) {
+    targetPupilX = moves[i][0];
+    targetPupilY = moves[i][1];
+    
+    for (int j = 0; j < 30; j++) {
+      smoothPupilMovement();
+      drawNormalEyesSmooth();
+      delay(20);
+    }
+  }
+}
+
+// Quick natural blink
+void quickBlink() {
+  for (int i = 0; i < 5; i++) {
+    leftEyeScaleY = 1.0 - (i * 0.2);
+    rightEyeScaleY = 1.0 - (i * 0.2);
+    drawNormalEyesSmooth();
+    delay(15);
+  }
+  
+  delay(50);
+  
+  for (int i = 5; i >= 0; i--) {
+    leftEyeScaleY = 1.0 - (i * 0.2);
+    rightEyeScaleY = 1.0 - (i * 0.2);
+    drawNormalEyesSmooth();
+    delay(15);
+  }
+}
+
+// Curious look animation
+void curiousLook() {
+  // Squash and stretch
+  for (int i = 0; i < 10; i++) {
+    leftEyeScaleX = 1.0 + sin(i * 0.3) * 0.15;
+    leftEyeScaleY = 1.0 - sin(i * 0.3) * 0.15;
+    rightEyeScaleX = leftEyeScaleX;
+    rightEyeScaleY = leftEyeScaleY;
+    
+    targetPupilY = -4 + sin(i * 0.5) * 2;
+    smoothPupilMovement();
+    drawNormalEyesSmooth();
+    delay(50);
+  }
+}
+
+// Happy bounce animation
+void happyBounce() {
+  for (int i = 0; i < 3; i++) {
+    // Bounce up
+    for (int j = 0; j < 8; j++) {
+      leftEyeScaleY = 1.0 + sin(j * 0.4) * 0.2;
+      rightEyeScaleY = leftEyeScaleY;
+      drawNormalEyesSmooth();
+      delay(30);
+    }
+  }
+  happyEyes();
+  delay(800);
+}
+
+// Excited wiggle
+void excitedWiggle() {
+  for (int i = 0; i < 20; i++) {
+    targetPupilX = sin(i * 0.5) * 4;
+    targetPupilY = cos(i * 0.6) * 3;
+    smoothPupilMovement();
+    
+    leftEyeScaleX = 1.0 + sin(i * 0.4) * 0.1;
+    rightEyeScaleX = 1.0 + sin(i * 0.4 + 0.5) * 0.1;
+    
+    drawNormalEyesSmooth();
+    delay(40);
+  }
+  targetPupilX = 0;
+  targetPupilY = 0;
+}
+
+// Shy look away
+void shyLook() {
+  targetPupilX = -6;
+  targetPupilY = 2;
+  
+  for (int i = 0; i < 30; i++) {
+    smoothPupilMovement();
+    drawNormalEyesSmooth();
+    delay(30);
+  }
+  
+  quickBlink();
+  delay(500);
+  
+  targetPupilX = 0;
+  targetPupilY = 0;
+}
+
+// Playful wink
+void playfulWink() {
+  // Wink left eye
+  for (int i = 0; i < 8; i++) {
+    leftEyeScaleY = 1.0 - (i * 0.125);
+    targetPupilX = 3;
+    smoothPupilMovement();
+    drawNormalEyesSmooth();
+    delay(30);
+  }
+  
+  delay(200);
+  
+  for (int i = 8; i >= 0; i--) {
+    leftEyeScaleY = 1.0 - (i * 0.125);
+    drawNormalEyesSmooth();
+    delay(30);
+  }
+  
+  targetPupilX = 0;
 }
 
 void animatePupilMovement(int targetX, int targetY, int duration) {
@@ -261,6 +478,25 @@ void blinkEyes() {
   }
   
   drawNormalEyes();
+}
+
+// Smooth organic blink
+void blinkEyesSmooth() {
+  for (int i = 0; i < 10; i++) {
+    leftEyeScaleY = 1.0 - (i * 0.1);
+    rightEyeScaleY = 1.0 - (i * 0.1);
+    drawNormalEyesSmooth();
+    delay(20);
+  }
+  
+  delay(80);
+  
+  for (int i = 10; i >= 0; i--) {
+    leftEyeScaleY = 1.0 - (i * 0.1);
+    rightEyeScaleY = 1.0 - (i * 0.1);
+    drawNormalEyesSmooth();
+    delay(20);
+  }
 }
 
 void happyEyes() {
