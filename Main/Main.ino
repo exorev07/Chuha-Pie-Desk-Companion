@@ -68,9 +68,14 @@ int currentEmotion = 0;  // 0=normal, 1=happy, 2=surprised, 3=sleepy, 4=heart
 bool touchDetected = false;
 bool lastTouchState = false;
 unsigned long lastTouchTime = 0;
+unsigned long touchStartTime = 0;
+unsigned long touchDuration = 0;
+bool isLongPress = false;
+int affectionLevel = 0;  // Builds up during long press
 
 // Idle animation state
 int idleState = 0;
+unsigned long lastRandomAction = 0;
 
 
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT,
@@ -98,22 +103,26 @@ void setup() {
 }
 
 void loop() {
-  // Check touch sensor
+  // Check touch sensor continuously
   checkTouch();
   
   // Smooth pupil tracking animation
   smoothPupilMovement();
   
+  // Handle long press affection
+  if (isLongPress) {
+    showAffectionResponse();
+  }
   // If touch detected, show selected emotion
-  if (touchDetected && millis() - lastTouchTime < 3000) {
+  else if (touchDetected && millis() - lastTouchTime < 2000) {
     showEmotionByTouch();
   } else {
-    // Organic idle behaviors
+    // Organic idle behaviors with more variety
     if (millis() - lastIdleTime > idleInterval) {
       lastIdleTime = millis();
-      idleInterval = random(2000, 5000);
+      idleInterval = random(1500, 4000);
       
-      int behavior = random(0, 10);
+      int behavior = random(0, 15);  // More variety
       
       switch(behavior) {
         case 0:
@@ -137,6 +146,21 @@ void loop() {
           break;
         case 7:
           playfulWink();
+          break;
+        case 8:
+          sneeze();  // Random sneeze!
+          break;
+        case 9:
+          yawn();
+          break;
+        case 10:
+          stretch();
+          break;
+        case 11:
+          confusedTilt();
+          break;
+        case 12:
+          giggle();
           break;
         default:
           // Just look around subtly
@@ -162,21 +186,51 @@ void loop() {
 void checkTouch() {
   bool currentTouch = digitalRead(TOUCH_PIN);
   
-  // Detect rising edge (touch event)
+  // Detect rising edge (touch started)
   if (currentTouch && !lastTouchState) {
+    touchStartTime = millis();
     touchDetected = true;
-    lastTouchTime = millis();
+    affectionLevel = 0;
+    Serial.println("Touch started!");
+  }
+  
+  // While touching, track duration
+  if (currentTouch) {
+    touchDuration = millis() - touchStartTime;
     
-    // Cycle to next emotion
-    currentEmotion++;
-    if (currentEmotion > 4) {
-      currentEmotion = 0;
+    // Long press detection (1+ seconds)
+    if (touchDuration > 1000 && !isLongPress) {
+      isLongPress = true;
+      Serial.println("Long press detected! Getting excited...");
     }
     
-    Serial.print("Touch detected! Emotion: ");
-    Serial.println(currentEmotion);
+    // Build up affection during long press
+    if (isLongPress) {
+      affectionLevel = min(100, (int)((touchDuration - 1000) / 30));  // 0-100 over ~3 seconds
+    }
+  }
+  
+  // Detect falling edge (touch released)
+  if (!currentTouch && lastTouchState) {
+    touchDuration = millis() - touchStartTime;
+    lastTouchTime = millis();
     
-    delay(200); // Debounce
+    if (isLongPress) {
+      Serial.println("Long press released! Showing big heart!");
+      showBigHeartSequence();
+      isLongPress = false;
+      affectionLevel = 0;
+    } else {
+      // Short press - cycle emotions
+      currentEmotion++;
+      if (currentEmotion > 4) {
+        currentEmotion = 0;
+      }
+      Serial.print("Short touch! Emotion: ");
+      Serial.println(currentEmotion);
+    }
+    
+    touchDuration = 0;
   }
   
   lastTouchState = currentTouch;
@@ -578,4 +632,313 @@ void drawHeart(int x, int y, int size) {
   display.fillCircle(x - size/2, y - size/3, size/2, SSD1306_WHITE);
   display.fillCircle(x + size/2, y - size/3, size/2, SSD1306_WHITE);
   display.fillTriangle(x - size, y, x, y + size, x + size, y, SSD1306_WHITE);
+}
+
+// ============ NEW ANIMATIONS FOR DESK COMPANION ============
+
+// Show affection response during long press
+void showAffectionResponse() {
+  display.clearDisplay();
+  
+  // Eyes get progressively happier and bigger
+  int excitement = map(affectionLevel, 0, 100, 0, 10);
+  
+  // Draw increasingly happy eyes
+  for(int i = 0; i < 3 + excitement/3; i++) {
+    display.drawLine(leftEyeX - 15, leftEyeY + i, 
+                     leftEyeX - 5, leftEyeY - 5 - excitement + i, SSD1306_WHITE);
+    display.drawLine(leftEyeX - 5, leftEyeY - 5 - excitement + i, 
+                     leftEyeX + 5, leftEyeY - 5 - excitement + i, SSD1306_WHITE);
+    display.drawLine(leftEyeX + 5, leftEyeY - 5 - excitement + i, 
+                     leftEyeX + 15, leftEyeY + i, SSD1306_WHITE);
+    
+    display.drawLine(rightEyeX - 15, rightEyeY + i, 
+                     rightEyeX - 5, rightEyeY - 5 - excitement + i, SSD1306_WHITE);
+    display.drawLine(rightEyeX - 5, rightEyeY - 5 - excitement + i, 
+                     rightEyeX + 5, rightEyeY - 5 - excitement + i, SSD1306_WHITE);
+    display.drawLine(rightEyeX + 5, rightEyeY - 5 - excitement + i, 
+                     rightEyeX + 15, rightEyeY + i, SSD1306_WHITE);
+  }
+  
+  // Show hearts floating up as affection builds
+  if (affectionLevel > 20) {
+    int numHearts = affectionLevel / 30 + 1;
+    for (int i = 0; i < numHearts; i++) {
+      int heartY = 60 - (affectionLevel * (i + 1) / 10) % 60;
+      drawHeart(10 + i * 30, heartY, 5);
+    }
+  }
+  
+  display.display();
+  delay(30);
+}
+
+// Big heart sequence after long press
+void showBigHeartSequence() {
+  // Huge heart explosion animation
+  for (int size = 5; size < 35; size += 3) {
+    display.clearDisplay();
+    drawHeart(64, 32, size);
+    display.display();
+    delay(40);
+  }
+  
+  // Pulse the heart
+  for (int i = 0; i < 3; i++) {
+    // Grow
+    for (int size = 35; size < 40; size += 2) {
+      display.clearDisplay();
+      drawHeart(64, 32, size);
+      display.display();
+      delay(50);
+    }
+    // Shrink
+    for (int size = 40; size > 35; size -= 2) {
+      display.clearDisplay();
+      drawHeart(64, 32, size);
+      display.display();
+      delay(50);
+    }
+  }
+  
+  // Show happy eyes with the heart
+  for (int i = 0; i < 50; i++) {
+    display.clearDisplay();
+    drawHeart(64, 20, 15);
+    
+    // Super happy eyes
+    display.drawLine(40, 45, 45, 42, SSD1306_WHITE);
+    display.drawLine(45, 42, 50, 42, SSD1306_WHITE);
+    display.drawLine(50, 42, 55, 45, SSD1306_WHITE);
+    
+    display.drawLine(73, 45, 78, 42, SSD1306_WHITE);
+    display.drawLine(78, 42, 83, 42, SSD1306_WHITE);
+    display.drawLine(83, 42, 88, 45, SSD1306_WHITE);
+    
+    display.display();
+    delay(40);
+  }
+  
+  delay(500);
+}
+
+// Sneeze animation
+void sneeze() {
+  Serial.println("*Achoo!*");
+  
+  // Build up
+  for (int i = 0; i < 10; i++) {
+    display.clearDisplay();
+    
+    // Eyes squinting
+    leftEyeScaleY = 0.3;
+    rightEyeScaleY = 0.3;
+    targetPupilY = 3;
+    
+    drawEllipse(leftEyeX, leftEyeY, EYE_RADIUS, EYE_RADIUS * leftEyeScaleY, true);
+    drawEllipse(rightEyeX, rightEyeY, EYE_RADIUS, EYE_RADIUS * rightEyeScaleY, true);
+    
+    display.display();
+    delay(50);
+  }
+  
+  // Sneeze!
+  for (int i = 0; i < 5; i++) {
+    display.clearDisplay();
+    
+    // Eyes shut tight
+    display.fillRect(leftEyeX - 15, leftEyeY - 2, 30, 4, SSD1306_WHITE);
+    display.fillRect(rightEyeX - 15, rightEyeY - 2, 30, 4, SSD1306_WHITE);
+    
+    // Sneeze particles
+    for (int j = 0; j < 8; j++) {
+      int px = 64 + random(-30, 30) + i * 10;
+      int py = 32 + random(-20, 20);
+      display.fillCircle(px, py, 1, SSD1306_WHITE);
+    }
+    
+    display.display();
+    delay(80);
+  }
+  
+  delay(300);
+  
+  // Recover
+  leftEyeScaleY = 1.0;
+  rightEyeScaleY = 1.0;
+  targetPupilY = 0;
+  quickBlink();
+}
+
+// Yawn animation
+void yawn() {
+  Serial.println("*Yawn*");
+  
+  // Eyes getting droopy
+  for (int i = 0; i < 15; i++) {
+    display.clearDisplay();
+    
+    leftEyeScaleY = 1.0 - (i * 0.05);
+    rightEyeScaleY = 1.0 - (i * 0.05);
+    
+    drawEllipse(leftEyeX, leftEyeY, EYE_RADIUS, EYE_RADIUS * leftEyeScaleY, true);
+    drawEllipse(rightEyeX, rightEyeY, EYE_RADIUS, EYE_RADIUS * rightEyeScaleY, true);
+    
+    // Open mouth
+    int mouthWidth = i * 2;
+    int mouthHeight = i;
+    display.drawCircle(64, 45, mouthWidth/2, SSD1306_WHITE);
+    
+    display.display();
+    delay(60);
+  }
+  
+  delay(400);
+  
+  // Close mouth and blink
+  for (int i = 15; i >= 0; i--) {
+    display.clearDisplay();
+    
+    leftEyeScaleY = 1.0 - (i * 0.05);
+    rightEyeScaleY = 1.0 - (i * 0.05);
+    
+    drawEllipse(leftEyeX, leftEyeY, EYE_RADIUS, EYE_RADIUS * leftEyeScaleY, true);
+    drawEllipse(rightEyeX, rightEyeY, EYE_RADIUS, EYE_RADIUS * rightEyeScaleY, true);
+    
+    display.display();
+    delay(40);
+  }
+  
+  leftEyeScaleY = 1.0;
+  rightEyeScaleY = 1.0;
+}
+
+// Stretch animation
+void stretch() {
+  Serial.println("*Stretch*");
+  
+  // Squash down
+  for (int i = 0; i < 8; i++) {
+    display.clearDisplay();
+    
+    leftEyeScaleY = 1.0 - (i * 0.08);
+    rightEyeScaleY = 1.0 - (i * 0.08);
+    leftEyeScaleX = 1.0 + (i * 0.05);
+    rightEyeScaleX = 1.0 + (i * 0.05);
+    
+    drawEllipse(leftEyeX, leftEyeY + i, EYE_RADIUS * leftEyeScaleX, EYE_RADIUS * leftEyeScaleY, true);
+    drawEllipse(rightEyeX, rightEyeY + i, EYE_RADIUS * rightEyeScaleX, EYE_RADIUS * rightEyeScaleY, true);
+    
+    display.display();
+    delay(50);
+  }
+  
+  delay(100);
+  
+  // Stretch up!
+  for (int i = 8; i >= -5; i--) {
+    display.clearDisplay();
+    
+    leftEyeScaleY = 1.0 + (abs(i - 3) * 0.1);
+    rightEyeScaleY = 1.0 + (abs(i - 3) * 0.1);
+    leftEyeScaleX = 1.0 - (abs(i - 3) * 0.05);
+    rightEyeScaleX = 1.0 - (abs(i - 3) * 0.05);
+    
+    int yOffset = i;
+    drawEllipse(leftEyeX, leftEyeY + yOffset, EYE_RADIUS * leftEyeScaleX, EYE_RADIUS * leftEyeScaleY, true);
+    drawEllipse(rightEyeX, rightEyeY + yOffset, EYE_RADIUS * rightEyeScaleX, EYE_RADIUS * rightEyeScaleY, true);
+    
+    display.display();
+    delay(50);
+  }
+  
+  // Reset
+  leftEyeScaleX = 1.0;
+  leftEyeScaleY = 1.0;
+  rightEyeScaleX = 1.0;
+  rightEyeScaleY = 1.0;
+}
+
+// Confused head tilt
+void confusedTilt() {
+  Serial.println("*Confused*");
+  
+  for (int angle = 0; angle < 20; angle += 2) {
+    display.clearDisplay();
+    
+    // Tilt eyes
+    int leftTiltY = sin(angle * 0.1) * 3;
+    int rightTiltY = -sin(angle * 0.1) * 3;
+    
+    drawEllipse(leftEyeX, leftEyeY + leftTiltY, EYE_RADIUS * 0.9, EYE_RADIUS, true);
+    display.fillCircle(leftEyeX - 2, leftEyeY + leftTiltY, PUPIL_RADIUS - 2, SSD1306_BLACK);
+    
+    drawEllipse(rightEyeX, rightEyeY + rightTiltY, EYE_RADIUS * 0.9, EYE_RADIUS, true);
+    display.fillCircle(rightEyeX + 2, rightEyeY + rightTiltY, PUPIL_RADIUS - 2, SSD1306_BLACK);
+    
+    // Question mark appears
+    if (angle > 10) {
+      display.setTextSize(2);
+      display.setCursor(100, 15);
+      display.print("?");
+    }
+    
+    display.display();
+    delay(50);
+  }
+  
+  delay(800);
+  
+  // Tilt back
+  for (int angle = 20; angle >= 0; angle -= 2) {
+    display.clearDisplay();
+    
+    int leftTiltY = sin(angle * 0.1) * 3;
+    int rightTiltY = -sin(angle * 0.1) * 3;
+    
+    drawEllipse(leftEyeX, leftEyeY + leftTiltY, EYE_RADIUS * 0.9, EYE_RADIUS, true);
+    display.fillCircle(leftEyeX - 2, leftEyeY + leftTiltY, PUPIL_RADIUS - 2, SSD1306_BLACK);
+    
+    drawEllipse(rightEyeX, rightEyeY + rightTiltY, EYE_RADIUS * 0.9, EYE_RADIUS, true);
+    display.fillCircle(rightEyeX + 2, rightEyeY + rightTiltY, PUPIL_RADIUS - 2, SSD1306_BLACK);
+    
+    display.display();
+    delay(50);
+  }
+}
+
+// Giggle animation
+void giggle() {
+  Serial.println("*Giggle*");
+  
+  for (int i = 0; i < 5; i++) {
+    // Eyes close in joy
+    display.clearDisplay();
+    
+    for(int j = 0; j < 3; j++) {
+      display.drawLine(leftEyeX - 12, leftEyeY + j, 
+                       leftEyeX - 4, leftEyeY - 6 + j, SSD1306_WHITE);
+      display.drawLine(leftEyeX - 4, leftEyeY - 6 + j, 
+                       leftEyeX + 4, leftEyeY - 6 + j, SSD1306_WHITE);
+      display.drawLine(leftEyeX + 4, leftEyeY - 6 + j, 
+                       leftEyeX + 12, leftEyeY + j, SSD1306_WHITE);
+      
+      display.drawLine(rightEyeX - 12, rightEyeY + j, 
+                       rightEyeX - 4, rightEyeY - 6 + j, SSD1306_WHITE);
+      display.drawLine(rightEyeX - 4, rightEyeY - 6 + j, 
+                       rightEyeX + 4, rightEyeY - 6 + j, SSD1306_WHITE);
+      display.drawLine(rightEyeX + 4, rightEyeY - 6 + j, 
+                       rightEyeX + 12, rightEyeY + j, SSD1306_WHITE);
+    }
+    
+    // Bouncing motion
+    int bounce = abs((i % 4) - 2);
+    
+    display.display();
+    delay(120);
+    
+    // Quick open
+    drawNormalEyesSmooth();
+    delay(80);
+  }
 }
