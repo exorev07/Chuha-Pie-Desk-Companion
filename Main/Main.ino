@@ -73,6 +73,11 @@ unsigned long touchDuration = 0;
 bool isLongPress = false;
 int affectionLevel = 0;  // Builds up during long press
 
+// Double tap detection
+unsigned long lastTapTime = 0;
+int tapCount = 0;
+bool doubleTapDetected = false;
+
 // Idle animation state
 int idleState = 0;
 unsigned long lastRandomAction = 0;
@@ -113,9 +118,14 @@ void loop() {
   if (isLongPress) {
     showAffectionResponse();
   }
-  // If touch detected, show selected emotion
+  // If double tap detected, show bonked animation
+  else if (doubleTapDetected && millis() - lastTouchTime < 1000) {
+    bonkedHead();
+    doubleTapDetected = false;
+  }
+  // If single touch detected, show random mood
   else if (touchDetected && millis() - lastTouchTime < 2000) {
-    showEmotionByTouch();
+    showRandomMood();
   } else {
     // Organic idle behaviors with more variety
     if (millis() - lastIdleTime > idleInterval) {
@@ -198,15 +208,15 @@ void checkTouch() {
   if (currentTouch) {
     touchDuration = millis() - touchStartTime;
     
-    // Long press detection (1+ seconds)
-    if (touchDuration > 1000 && !isLongPress) {
+    // Long press detection (2+ seconds) - show heart threshold
+    if (touchDuration > 2000 && !isLongPress) {
       isLongPress = true;
-      Serial.println("Long press detected! Getting excited...");
+      Serial.println("Long press >2s! Showing big heart!");
     }
     
-    // Build up affection during long press
-    if (isLongPress) {
-      affectionLevel = min(100, (int)((touchDuration - 1000) / 30));  // 0-100 over ~3 seconds
+    // Build up affection during long press (starts at 1s, peaks at 2s)
+    if (touchDuration > 1000 && !isLongPress) {
+      affectionLevel = min(100, (int)((touchDuration - 1000) / 10));  // 0-100 over 1 second
     }
   }
   
@@ -216,18 +226,27 @@ void checkTouch() {
     lastTouchTime = millis();
     
     if (isLongPress) {
+      // Long press (>2s) - big heart
       Serial.println("Long press released! Showing big heart!");
       showBigHeartSequence();
       isLongPress = false;
       affectionLevel = 0;
-    } else {
-      // Short press - cycle emotions
-      currentEmotion++;
-      if (currentEmotion > 4) {
-        currentEmotion = 0;
+      tapCount = 0;  // Reset tap count
+    } else if (touchDuration < 300) {
+      // Quick tap detected
+      unsigned long timeSinceLastTap = millis() - lastTapTime;
+      lastTapTime = millis();
+      
+      if (timeSinceLastTap < 500) {
+        // Double tap!
+        tapCount = 2;
+        doubleTapDetected = true;
+        Serial.println("Double tap! Bonk!");
+      } else {
+        // Single tap
+        tapCount = 1;
+        Serial.println("Single tap! Random mood...");
       }
-      Serial.print("Short touch! Emotion: ");
-      Serial.println(currentEmotion);
     }
     
     touchDuration = 0;
@@ -236,25 +255,39 @@ void checkTouch() {
   lastTouchState = currentTouch;
 }
 
-void showEmotionByTouch() {
-  switch(currentEmotion) {
+void showRandomMood() {
+  // Random mood reactions to single tap
+  int mood = random(0, 8);
+  
+  switch(mood) {
     case 0:
-      drawNormalEyes();
+      playfulWink();
       break;
     case 1:
-      happyEyes();
+      surprisedEyes();
+      delay(1000);
       break;
     case 2:
-      surprisedEyes();
+      shyLook();
       break;
     case 3:
-      sleepyEyes();
+      curiousLook();
       break;
     case 4:
-      heartEyes();
+      giggle();
+      break;
+    case 5:
+      happyBounce();
+      break;
+    case 6:
+      excitedWiggle();
+      break;
+    case 7:
+      confusedTilt();
       break;
   }
-  delay(100);
+  
+  touchDetected = false;  // Reset after showing mood
 }
 
 void drawNormalEyes() {
@@ -941,4 +974,111 @@ void giggle() {
     drawNormalEyesSmooth();
     delay(80);
   }
+}
+
+// Bonked head animation (double tap)
+void bonkedHead() {
+  Serial.println("*BONK!*");
+  
+  // Impact flash
+  display.clearDisplay();
+  display.fillRect(0, 0, 128, 64, SSD1306_WHITE);
+  display.display();
+  delay(50);
+  
+  // Eyes spinning/dizzy
+  for (int spin = 0; spin < 3; spin++) {
+    // Draw spiral/swirl eyes
+    for (int frame = 0; frame < 8; frame++) {
+      display.clearDisplay();
+      
+      float angle = frame * 0.785;  // 45 degrees per frame
+      
+      // Left eye - spiral
+      for (int r = 2; r < 12; r += 2) {
+        int x1 = leftEyeX + r * cos(angle + r * 0.3);
+        int y1 = leftEyeY + r * sin(angle + r * 0.3);
+        int x2 = leftEyeX + (r + 2) * cos(angle + (r + 2) * 0.3);
+        int y2 = leftEyeY + (r + 2) * sin(angle + (r + 2) * 0.3);
+        display.drawLine(x1, y1, x2, y2, SSD1306_WHITE);
+      }
+      
+      // Right eye - spiral
+      for (int r = 2; r < 12; r += 2) {
+        int x1 = rightEyeX + r * cos(angle + r * 0.3);
+        int y1 = rightEyeY + r * sin(angle + r * 0.3);
+        int x2 = rightEyeX + (r + 2) * cos(angle + (r + 2) * 0.3);
+        int y2 = rightEyeY + (r + 2) * sin(angle + (r + 2) * 0.3);
+        display.drawLine(x1, y1, x2, y2, SSD1306_WHITE);
+      }
+      
+      // Stars/impact marks
+      int star1X = 10 + frame * 2;
+      int star2X = 118 - frame * 2;
+      drawStar(star1X, 10, 4);
+      drawStar(star2X, 15, 3);
+      
+      display.display();
+      delay(60);
+    }
+  }
+  
+  // Show X eyes (dazed)
+  for (int i = 0; i < 20; i++) {
+    display.clearDisplay();
+    
+    // Left X eye
+    display.drawLine(leftEyeX - 8, leftEyeY - 8, leftEyeX + 8, leftEyeY + 8, SSD1306_WHITE);
+    display.drawLine(leftEyeX + 8, leftEyeY - 8, leftEyeX - 8, leftEyeY + 8, SSD1306_WHITE);
+    
+    // Right X eye
+    display.drawLine(rightEyeX - 8, rightEyeY - 8, rightEyeX + 8, rightEyeY + 8, SSD1306_WHITE);
+    display.drawLine(rightEyeX + 8, rightEyeY - 8, rightEyeX - 8, rightEyeY + 8, SSD1306_WHITE);
+    
+    // Wobbly stars
+    int wobble = sin(i * 0.5) * 2;
+    drawStar(15, 10 + wobble, 4);
+    drawStar(110, 12 - wobble, 4);
+    
+    display.display();
+    delay(100);
+  }
+  
+  delay(300);
+  
+  // Shake it off and recover
+  for (int shake = 0; shake < 8; shake++) {
+    display.clearDisplay();
+    
+    int offset = (shake % 2) ? 3 : -3;
+    
+    // Eyes squinting, shaking
+    leftEyeScaleY = 0.5;
+    rightEyeScaleY = 0.5;
+    
+    drawEllipse(leftEyeX + offset, leftEyeY, EYE_RADIUS, EYE_RADIUS * leftEyeScaleY, true);
+    display.fillCircle(leftEyeX + offset, leftEyeY, PUPIL_RADIUS - 2, SSD1306_BLACK);
+    
+    drawEllipse(rightEyeX + offset, rightEyeY, EYE_RADIUS, EYE_RADIUS * rightEyeScaleY, true);
+    display.fillCircle(rightEyeX + offset, rightEyeY, PUPIL_RADIUS - 2, SSD1306_BLACK);
+    
+    display.display();
+    delay(80);
+  }
+  
+  // Full recovery blink
+  leftEyeScaleY = 1.0;
+  rightEyeScaleY = 1.0;
+  quickBlink();
+  
+  delay(500);
+}
+
+// Helper function to draw star
+void drawStar(int x, int y, int size) {
+  // Draw a simple 4-pointed star
+  display.drawLine(x, y - size, x, y + size, SSD1306_WHITE);
+  display.drawLine(x - size, y, x + size, y, SSD1306_WHITE);
+  display.drawLine(x - size * 0.7, y - size * 0.7, x + size * 0.7, y + size * 0.7, SSD1306_WHITE);
+  display.drawLine(x + size * 0.7, y - size * 0.7, x - size * 0.7, y + size * 0.7, SSD1306_WHITE);
 }
