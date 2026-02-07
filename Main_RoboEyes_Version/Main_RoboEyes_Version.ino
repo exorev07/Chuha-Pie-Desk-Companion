@@ -18,12 +18,30 @@
  * TTP223 VCC -> ESP32 3.3V
  * TTP223 GND -> ESP32 GND
  * TTP223 SIG -> ESP32 GPIO 15
+ * 
+ * Features:
+ * - Long press (>2s): Shows happy mood with laugh animation
+ * - Single tap: Displays current time from NTP
+ * - Double tap: Dizzy/confused animation with vertical flicker and angry mood
+ * - Auto blink and idle movements
+ * - WiFi + NTP for accurate time display
  */
 
 #include <SPI.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <FluxGarage_RoboEyes.h>
+#include <WiFi.h>
+#include <time.h>
+
+// ============ WIFI CREDENTIALS ============
+const char* WIFI_SSID = "Virus.exe";
+const char* WIFI_PASSWORD = "Exorev@3727";
+
+// ============ TIME CONFIGURATION ============
+const char* NTP_SERVER = "pool.ntp.org";
+const long GMT_OFFSET_SEC = 19800;  // IST is GMT+5:30 (5.5 * 3600 = 19800 seconds)
+const int DAYLIGHT_OFFSET_SEC = 0;   // India doesn't use daylight saving
 
 // ============ PIN DEFINITIONS ============
 #define OLED_MOSI   23
@@ -47,17 +65,15 @@ bool lastTouchState = false;
 unsigned long touchStartTime = 0;
 unsigned long touchDuration = 0;
 unsigned long lastTapTime = 0;
-unsigned long lastTouchEndTime = 0;
-int tapCount = 0;
 bool isLongPress = false;
 
 // ============ ANIMATION STATE ============
 enum State {
   IDLE,
   LONG_PRESS_BUILDING,
-  SHOWING_HEART,
+  SHOWING_AFFECTION,
   WAITING_FOR_SECOND_TAP,
-  RANDOM_MOOD,
+  SHOWING_TIME,
   BONKED,
   RECOVERING
 };
@@ -86,23 +102,32 @@ void setup() {
   eyes.setBorderradius(10, 10);
   eyes.setSpacebetween(15);
   
+  // Show startup message
+  showStartupMessage();
+  
+  // Connect to WiFi
+  connectToWiFi();
+  
+  // Wake up eyes
+  wakeUpEyes();
+  
   // Setup touch sensor
   pinMode(TOUCH_PIN, INPUT);
-  
-  // Welcome animation
-  welcomeAnimation();
 }
 
 // ============ MAIN LOOP ============
 void loop() {
   handleTouch();
   updateState();
-  eyes.update();
+  
+  // Only update eyes when not showing time
+  if (currentState != SHOWING_TIME) {
+    eyes.update();
+  }
 }
 
-// ============ WELCOME ANIMATION ============
-void welcomeAnimation() {
-  // Startup message
+// ============ STARTUP MESSAGE ============
+void showStartupMessage() {
   display.clearDisplay();
   display.setTextColor(SSD1306_WHITE);
   
@@ -124,7 +149,10 @@ void welcomeAnimation() {
   
   display.clearDisplay();
   display.display();
-  
+}
+
+// ============ WAKE UP ANIMATION ============
+void wakeUpEyes() {
   // Wake up sequence
   eyes.close();
   delay(500);
@@ -149,6 +177,94 @@ void welcomeAnimation() {
   
   eyes.setMood(DEFAULT);
   eyes.setPosition(DEFAULT);
+}
+
+// ============ WIFI CONNECTION ============
+void connectToWiFi() {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 10);
+  display.println("Connecting WiFi!");
+  display.display();
+  
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+    delay(500);
+    display.print(".");
+    display.display();
+    attempts++;
+  }
+  
+  display.clearDisplay();
+  if (WiFi.status() == WL_CONNECTED) {
+    display.setCursor(0, 10);
+    display.println("WiFi Connected!");
+    display.setCursor(0, 25);
+    display.println("Syncing time...");
+    display.display();
+    
+    // Configure time
+    configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, NTP_SERVER);
+    delay(2000);
+    
+    display.clearDisplay();
+    display.setCursor(0, 20);
+    display.println("Time synced!");
+    display.display();
+    delay(1000);
+  } else {
+    display.setCursor(0, 10);
+    display.println("WiFi Failed!");
+    display.setCursor(0, 25);
+    display.println("Check credentials");
+    display.display();
+    delay(3000);
+  }
+  
+  display.clearDisplay();
+  display.display();
+}
+
+// ============ TIME DISPLAY ============
+void displayCurrentTime() {
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) {
+    // If time fetch fails, show error
+    display.clearDisplay();
+    display.setTextSize(1);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(15, 25);
+    display.println("Time unavailable :(");
+    display.display();
+    return;
+  }
+  
+  // Format time as HH:MM:SS
+  char timeStr[10];
+  strftime(timeStr, sizeof(timeStr), "%H:%M:%S", &timeinfo);
+  
+  // Format date as DD-MM-YYYY
+  char dateStr[15];
+  strftime(dateStr, sizeof(dateStr), "%d-%m-%Y", &timeinfo);
+  
+  // Display time
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  
+  // Large time display
+  display.setTextSize(2);
+  display.setCursor(17, 15);
+  display.println(timeStr);
+  
+  // Date below
+  display.setTextSize(1);
+  display.setCursor(35, 40);
+  display.println(dateStr);
+  
+  display.display();
 }
 
 // ============ TOUCH HANDLING ============
@@ -178,11 +294,11 @@ void handleTouch() {
         stateStartTime = millis();
       }
     }
-    // Very long press - show heart! (>2s)
+    // Very long press - show affection! (>2s)
     else if (touchDuration >= 2000) {
       if (!isLongPress) {
         isLongPress = true;
-        currentState = SHOWING_HEART;
+        currentState = SHOWING_AFFECTION;
         stateStartTime = millis();
       }
     }
@@ -191,11 +307,10 @@ void handleTouch() {
   // Falling edge - touch released
   if (!currentTouch && lastTouchState) {
     touchDuration = millis() - touchStartTime;
-    lastTouchEndTime = millis();
     
     // Handle different touch types
     if (isLongPress) {
-      // Long press was shown, do nothing (already showing heart)
+      // Long press was shown, do nothing (already showing affection)
       isLongPress = false;
     }
     else if (touchDuration < 300) {
@@ -206,6 +321,12 @@ void handleTouch() {
         // DOUBLE TAP!
         currentState = BONKED;
         stateStartTime = millis();
+        lastTapTime = 0;
+      } else if (currentState == SHOWING_TIME) {
+        // Tap while showing time - go back to eyes
+        currentState = IDLE;
+        eyes.setMood(DEFAULT);
+        eyes.setPosition(DEFAULT);
         lastTapTime = 0;
       } else {
         // First tap - wait for possible second tap
@@ -231,8 +352,8 @@ void updateState() {
       break;
       
     case LONG_PRESS_BUILDING:
-      // Show progressively happier eyes with excitement
-      showAffectionBuildup();
+      // Show happy for 1 second during buildup
+      eyes.setMood(HAPPY);
       
       // Return to idle if touch released
       if (!digitalRead(TOUCH_PIN)) {
@@ -242,11 +363,14 @@ void updateState() {
       }
       break;
       
-    case SHOWING_HEART:
-      // Display big heart
-      displayBigHeart();
+    case SHOWING_AFFECTION:
+      // Show happy with laugh animation - multiple laughs
+      eyes.setMood(HAPPY);
+      if (stateTime < 50 || (stateTime > 800 && stateTime < 850) || (stateTime > 1600 && stateTime < 1650)) {
+        eyes.anim_laugh();
+      }
       
-      // Show for 3 seconds
+      // Show for 3 seconds with multiple laughs
       if (stateTime > 3000 || !digitalRead(TOUCH_PIN)) {
         currentState = RECOVERING;
         stateStartTime = millis();
@@ -256,25 +380,17 @@ void updateState() {
     case WAITING_FOR_SECOND_TAP:
       // Wait for potential second tap
       if (stateTime > 500) {
-        // Timeout - it was a single tap
-        currentState = RANDOM_MOOD;
+        // Timeout - it was a single tap, show time
+        currentState = SHOWING_TIME;
         stateStartTime = millis();
-        triggerRandomMood();
       }
       break;
       
-    case RANDOM_MOOD:
-      // Show random expression
-      if (stateTime == 0 || stateTime < 50) {
-        triggerRandomMood();
-      }
+    case SHOWING_TIME:
+      // Display current time continuously
+      displayCurrentTime();
       
-      // Return to idle after 2 seconds
-      if (stateTime > 2000) {
-        currentState = IDLE;
-        eyes.setMood(DEFAULT);
-        eyes.setPosition(DEFAULT);
-      }
+      // Note: Tap to exit is handled in handleTouch()
       break;
       
     case BONKED:
@@ -290,9 +406,9 @@ void updateState() {
           eyes.setVFlicker(false, 5);
           eyes.setMood(TIRED);
       }
-      else if (stateTime < 6000) {
+      else if (stateTime < 8000) {
         // Phase 2: Show angry (no flicker)
-        if (stateTime < 5000) {
+        if (stateTime < 7000) {
           eyes.setMood(ANGRY);
         }
       }
@@ -315,102 +431,6 @@ void updateState() {
       if (stateTime > 1000) {
         currentState = IDLE;
       }
-      break;
-  }
-}
-
-// ============ AFFECTION BUILDUP ============
-void showAffectionBuildup() {
-  // Show progressively happier eyes with excitement
-  eyes.setMood(HAPPY);
-}
-
-// ============ BIG HEART DISPLAY ============
-void displayBigHeart() {
-  // Show happy state
-  eyes.setMood(HAPPY);
-}
-
-// ============ RANDOM MOOD TRIGGER ============
-void triggerRandomMood() {
-  int mood = random(0, 12);
-  
-  switch(mood) {
-    case 0:
-      eyes.setMood(HAPPY);
-      eyes.close(0, 1);  // Close right eye
-      delay(300);
-      eyes.open(0, 1);
-      break;
-      
-    case 1:
-      eyes.setMood(DEFAULT);
-      eyes.setWidth(50, 50);
-      eyes.setHeight(35, 35);
-      delay(1000);
-      eyes.setWidth(45, 45);
-      eyes.setHeight(30, 30);
-      break;
-      
-    case 2:
-      eyes.setMood(HAPPY);
-      eyes.anim_laugh();
-      break;
-      
-    case 3:
-      eyes.setMood(DEFAULT);
-      eyes.anim_confused();
-      break;
-      
-    case 4:
-      eyes.setMood(TIRED);
-      delay(1500);
-      break;
-      
-    case 5:
-      eyes.setPosition(W);
-      delay(800);
-      eyes.setPosition(DEFAULT);
-      break;
-      
-    case 6:
-      eyes.setPosition(E);
-      delay(800);
-      eyes.setPosition(DEFAULT);
-      break;
-      
-    case 7:
-      eyes.setPosition(N);
-      delay(800);
-      eyes.setPosition(DEFAULT);
-      break;
-      
-    case 8:
-      eyes.setMood(ANGRY);
-      delay(1000);
-      break;
-      
-    case 9:
-      eyes.setCuriosity(true);
-      eyes.setPosition(NE);
-      delay(500);
-      eyes.setPosition(NW);
-      delay(500);
-      eyes.setCuriosity(false);
-      eyes.setPosition(DEFAULT);
-      break;
-      
-    case 10:
-      eyes.setPosition(SE);
-      eyes.blink();
-      delay(1000);
-      eyes.setPosition(DEFAULT);
-      break;
-      
-    case 11:
-      eyes.setSweat(true);
-      delay(2000);
-      eyes.setSweat(false);
       break;
   }
 }
