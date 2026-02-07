@@ -18,7 +18,7 @@
  * TTP223 VCC -> ESP32 3.3V
  * TTP223 GND -> ESP32 GND
  * TTP223 SIG -> ESP32 GPIO 15
- *
+ */
 
 #include <SPI.h>
 #include <Adafruit_GFX.h>
