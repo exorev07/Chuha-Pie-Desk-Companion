@@ -279,12 +279,16 @@ void updateState() {
       
     case BONKED:
       // Show bonked animation with timing
-      if (stateTime < 2000) {
+      if (stateTime < 1000) {
         // Phase 1: Confused animation
-        if (stateTime < 100) {
+        if (stateTime < 200) {
           eyes.setMood(TIRED);
-          eyes.anim_confused();
+          eyes.setVFlicker(true, 5);
         }
+      }
+      else if (stateTime < 3000) {
+          eyes.setVFlicker(false, 5);
+          eyes.setMood(TIRED);
       }
       else if (stateTime < 6000) {
         // Phase 2: Show angry (no flicker)
