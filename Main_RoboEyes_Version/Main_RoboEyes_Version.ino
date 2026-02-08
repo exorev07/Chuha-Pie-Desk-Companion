@@ -30,21 +30,27 @@
  *   ECHO -> 1kΩ resistor -> GPIO 27 -> 2kΩ resistor -> GND
  *   This divides 5V to ~3.3V (safe for ESP32)
  * 
+ * DHT11 VCC  -> ESP32 3.3V
+ * DHT11 GND  -> ESP32 GND
+ * DHT11 DATA -> ESP32 GPIO 14
+ * 
  * Features:
  * - Long press (>2s): Shows happy mood with laugh animation
- * - Single tap: Displays current time from NTP
+ * - Single tap: Cycles through time, distance, and climate displays
  * - Double tap: Dizzy/confused animation with vertical flicker and angry mood
  * - Auto blink and idle movements
  * - WiFi + NTP for accurate time display
  * - Presence detection: Shows TIRED when alone, greets when someone sits down
+ * - Temperature and humidity monitoring
  */
 
 #include <SPI.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
-#include <FluxGarage_RoboEyes.h>
 #include <WiFi.h>
 #include <time.h>
+#include <DHT.h>
+#include <FluxGarage_RoboEyes.h>
 
 // ============ WIFI CREDENTIALS ============
 const char* WIFI_SSID = "Virus.exe";
@@ -64,6 +70,11 @@ const int DAYLIGHT_OFFSET_SEC = 0;   // India doesn't use daylight saving
 #define TOUCH_PIN   15
 #define TRIG_PIN    26  // HC-SR04 Trigger
 #define ECHO_PIN    27  // HC-SR04 Echo
+#define DHT_PIN     14  // DHT11 Data
+
+// ============ DHT11 SENSOR CONFIG ============
+#define DHT_TYPE DHT11
+DHT dht(DHT_PIN, DHT_TYPE);
 
 // ============ DISTANCE SENSOR CONFIG ============
 #define DETECTION_DISTANCE 15  // Distance in cm to detect presence (adjust as needed)
@@ -107,6 +118,7 @@ enum State {
   WAITING_FOR_SECOND_TAP,
   SHOWING_TIME,
   SHOWING_DISTANCE,
+  SHOWING_CLIMATE,
   BONKED,
   RECOVERING
 };
@@ -144,6 +156,9 @@ void setup() {
   // Wake up eyes
   wakeUpEyes();
   
+  // Initialize DHT sensor
+  dht.begin();
+  
   // Setup touch sensor
   pinMode(TOUCH_PIN, INPUT);
   
@@ -159,7 +174,7 @@ void loop() {
   updateState();
   
   // Only update eyes when not showing info displays
-  if (currentState != SHOWING_TIME && currentState != SHOWING_DISTANCE) {
+  if (currentState != SHOWING_TIME && currentState != SHOWING_DISTANCE && currentState != SHOWING_CLIMATE) {
     eyes.update();
   }
 }
@@ -381,14 +396,14 @@ void displayDistance() {
   
   // Title
   display.setTextSize(1);
-  display.setCursor(30, 10);
+  display.setCursor(10, 10);
   display.println("Distance:");
   
   // Large distance display
   display.setTextSize(3);
   if (distance > 0 && distance < 400) {
     // Valid reading
-    display.setCursor(15, 30);
+    display.setCursor(20, 30);
     if (distance < 100) {
       display.print(distance, 1);  // Show 1 decimal for < 100cm
     } else {
@@ -402,6 +417,45 @@ void displayDistance() {
     display.setCursor(35, 30);
     display.println("- - -");
   }
+  
+  display.display();
+}
+
+void displayClimate() {
+  float temperature = dht.readTemperature();
+  float humidity = dht.readHumidity();
+  
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  
+  // Check if readings are valid
+  if (isnan(temperature) || isnan(humidity)) {
+    display.setTextSize(1);
+    display.setCursor(15, 25);
+    display.println("Sensor Error!" );
+    display.display();
+    return;
+  }
+  
+  // Temperature section
+  display.setTextSize(1);
+  display.setCursor(10, 5);
+  display.print("Temperature:");
+  display.setTextSize(2);
+  display.setCursor(30, 20);
+  display.print(temperature, 1);
+  display.setTextSize(1);
+  display.print(" C");
+  
+  // Humidity section
+  display.setTextSize(1);
+  display.setCursor(10, 40);
+  display.print("Humidity:");
+  display.setTextSize(2);
+  display.setCursor(30, 50);
+  display.print(humidity, 0);
+  display.setTextSize(1);
+  display.print(" %");
   
   display.display();
 }
@@ -466,7 +520,11 @@ void handleTouch() {
         currentState = SHOWING_DISTANCE;
         lastTapTime = 0;
       } else if (currentState == SHOWING_DISTANCE) {
-        // Tap while showing distance - go back to eyes
+        // Tap while showing distance - show climate
+        currentState = SHOWING_CLIMATE;
+        lastTapTime = 0;
+      } else if (currentState == SHOWING_CLIMATE) {
+        // Tap while showing climate - go back to eyes
         currentState = IDLE;
         eyes.setMood(DEFAULT);
         eyes.setPosition(DEFAULT);
@@ -559,6 +617,13 @@ void updateState() {
     case SHOWING_DISTANCE:
       // Display distance reading continuously
       displayDistance();
+      
+      // Note: Tap to cycle to climate display is handled in handleTouch()
+      break;
+      
+    case SHOWING_CLIMATE:
+      // Display temperature and humidity
+      displayClimate();
       
       // Note: Tap to exit is handled in handleTouch()
       break;
