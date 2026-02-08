@@ -656,16 +656,31 @@ void updateState() {
         eyes.anim_laugh();
       }
       
-      // Periodic vibration every 1 second while held
-      if (millis() - lastAffectionVibration >= 1000) {
-        vibrate(200);
-        lastAffectionVibration = millis();
+      // Initial rapid vibration pulses synced with first laughs (first 2 seconds)
+      if (stateTime < 2000) {
+        // 10 pulses: 100ms on, 100ms off (each cycle is 200ms)
+        int currentPulse = stateTime / 200;       // Which pulse cycle we're in
+        int withinPulse = stateTime % 200;        // Position within current cycle
+        
+        if (currentPulse < 10 && withinPulse < 100) {
+          digitalWrite(VIBRATION_PIN, HIGH);
+        } else {
+          digitalWrite(VIBRATION_PIN, LOW);
+        }
+      }
+      // After initial phase, periodic vibration every 100ms while held
+      else {
+        if (millis() - lastAffectionVibration >= 100) {
+          vibrate(200);
+          lastAffectionVibration = millis();
+        }
       }
       
       // Only exit when touch is released
       if (!digitalRead(TOUCH_PIN)) {
         currentState = RECOVERING;
         stateStartTime = millis();
+        digitalWrite(VIBRATION_PIN, LOW);  // Ensure vibration stops
       }
       break;
     }
