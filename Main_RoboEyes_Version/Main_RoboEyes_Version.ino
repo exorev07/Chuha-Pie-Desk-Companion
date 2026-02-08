@@ -118,7 +118,8 @@ enum State {
   WAITING_FOR_SECOND_TAP,
   SHOWING_TIME,
   SHOWING_DISTANCE,
-  SHOWING_CLIMATE,
+  SHOWING_TEMPERATURE,
+  SHOWING_HUMIDITY,
   BONKED,
   RECOVERING
 };
@@ -174,7 +175,7 @@ void loop() {
   updateState();
   
   // Only update eyes when not showing info displays
-  if (currentState != SHOWING_TIME && currentState != SHOWING_DISTANCE && currentState != SHOWING_CLIMATE) {
+  if (currentState != SHOWING_TIME && currentState != SHOWING_DISTANCE && currentState != SHOWING_TEMPERATURE && currentState != SHOWING_HUMIDITY) {
     eyes.update();
   }
 }
@@ -403,14 +404,14 @@ void displayDistance() {
   display.setTextSize(3);
   if (distance > 0 && distance < 400) {
     // Valid reading
-    display.setCursor(20, 30);
+    display.setCursor(30, 30);
     if (distance < 100) {
       display.print(distance, 1);  // Show 1 decimal for < 100cm
     } else {
       display.print((int)distance);  // No decimals for larger values
     }
     display.setTextSize(2);
-    display.println(" cm");
+    display.println("cm");
   } else {
     // Out of range
     display.setTextSize(2);
@@ -421,41 +422,62 @@ void displayDistance() {
   display.display();
 }
 
-void displayClimate() {
+void displayTemperature() {
   float temperature = dht.readTemperature();
+  
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  
+  // Check if reading is valid
+  if (isnan(temperature)) {
+    display.setTextSize(1);
+    display.setCursor(15, 25);
+    display.println("Sensor Error!");
+    display.display();
+    return;
+  }
+  
+  // Title
+  display.setTextSize(1);
+  display.setCursor(10, 10);
+  display.println("Temperature:");
+  
+  // Large temperature display
+  display.setTextSize(3);
+  display.setCursor(25, 30);
+  display.print(temperature, 1);
+  display.setTextSize(2);
+  display.println("C");
+  
+  display.display();
+}
+
+void displayHumidity() {
   float humidity = dht.readHumidity();
   
   display.clearDisplay();
   display.setTextColor(SSD1306_WHITE);
   
-  // Check if readings are valid
-  if (isnan(temperature) || isnan(humidity)) {
+  // Check if reading is valid
+  if (isnan(humidity)) {
     display.setTextSize(1);
     display.setCursor(15, 25);
-    display.println("Sensor Error!" );
+    display.println("Sensor Error!");
     display.display();
     return;
   }
   
-  // Temperature section
+  // Title
   display.setTextSize(1);
-  display.setCursor(10, 5);
-  display.print("Temperature:");
-  display.setTextSize(2);
-  display.setCursor(30, 20);
-  display.print(temperature, 1);
-  display.setTextSize(1);
-  display.print(" C");
+  display.setCursor(10, 10);
+  display.println("Humidity:");
   
-  // Humidity section
-  display.setTextSize(1);
-  display.setCursor(10, 40);
-  display.print("Humidity:");
-  display.setTextSize(2);
-  display.setCursor(30, 50);
+  // Large humidity display
+  display.setTextSize(3);
+  display.setCursor(45, 30);
   display.print(humidity, 0);
-  display.setTextSize(1);
-  display.print(" %");
+  display.setTextSize(2);
+  display.println("%");
   
   display.display();
 }
@@ -520,11 +542,15 @@ void handleTouch() {
         currentState = SHOWING_DISTANCE;
         lastTapTime = 0;
       } else if (currentState == SHOWING_DISTANCE) {
-        // Tap while showing distance - show climate
-        currentState = SHOWING_CLIMATE;
+        // Tap while showing distance - show temperature
+        currentState = SHOWING_TEMPERATURE;
         lastTapTime = 0;
-      } else if (currentState == SHOWING_CLIMATE) {
-        // Tap while showing climate - go back to eyes
+      } else if (currentState == SHOWING_TEMPERATURE) {
+        // Tap while showing temperature - show humidity
+        currentState = SHOWING_HUMIDITY;
+        lastTapTime = 0;
+      } else if (currentState == SHOWING_HUMIDITY) {
+        // Tap while showing humidity - go back to eyes
         currentState = IDLE;
         eyes.setMood(DEFAULT);
         eyes.setPosition(DEFAULT);
@@ -618,12 +644,19 @@ void updateState() {
       // Display distance reading continuously
       displayDistance();
       
-      // Note: Tap to cycle to climate display is handled in handleTouch()
+      // Note: Tap to cycle to temperature display is handled in handleTouch()
       break;
       
-    case SHOWING_CLIMATE:
-      // Display temperature and humidity
-      displayClimate();
+    case SHOWING_TEMPERATURE:
+      // Display temperature reading
+      displayTemperature();
+      
+      // Note: Tap to cycle to humidity display is handled in handleTouch()
+      break;
+      
+    case SHOWING_HUMIDITY:
+      // Display humidity reading
+      displayHumidity();
       
       // Note: Tap to exit is handled in handleTouch()
       break;
