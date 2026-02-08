@@ -90,6 +90,7 @@ bool personPresent = false;
 bool wasPersonPresent = false;
 unsigned long lastDistanceCheck = 0;
 unsigned long greetingStartTime = 0;
+unsigned long lastDistanceDisplayUpdate = 0;
 enum GreetingState {
   NO_GREETING,
   GREETING_CURIOUS,
@@ -105,6 +106,7 @@ enum State {
   SHOWING_AFFECTION,
   WAITING_FOR_SECOND_TAP,
   SHOWING_TIME,
+  SHOWING_DISTANCE,
   BONKED,
   RECOVERING
 };
@@ -156,8 +158,8 @@ void loop() {
   handleTouch();
   updateState();
   
-  // Only update eyes when not showing time
-  if (currentState != SHOWING_TIME) {
+  // Only update eyes when not showing info displays
+  if (currentState != SHOWING_TIME && currentState != SHOWING_DISTANCE) {
     eyes.update();
   }
 }
@@ -216,7 +218,7 @@ void wakeUpEyes() {
 }
 
 // ============ DISTANCE MEASUREMENT ============
-long getDistance() {
+float getDistance() {
   // Clear the trigger
   digitalWrite(TRIG_PIN, LOW);
   delayMicroseconds(2);
@@ -229,8 +231,8 @@ long getDistance() {
   // Read the echo
   long duration = pulseIn(ECHO_PIN, HIGH, 30000); // 30ms timeout
   
-  // Calculate distance in cm
-  long distance = duration * 0.034 / 2;
+  // Calculate distance in cm with decimal precision
+  float distance = duration * 0.034 / 2;
   
   return distance;
 }
@@ -243,7 +245,7 @@ void checkPresence() {
   }
   lastDistanceCheck = millis();
   
-  long distance = getDistance();
+  float distance = getDistance();
   wasPersonPresent = personPresent;
   
   // Detect if someone is within detection range
@@ -364,6 +366,46 @@ void displayCurrentTime() {
   display.display();
 }
 
+void displayDistance() {
+  // Only update display every 200ms to prevent flickering
+  unsigned long currentTime = millis();
+  if (currentTime - lastDistanceDisplayUpdate < 200) {
+    return;
+  }
+  lastDistanceDisplayUpdate = currentTime;
+  
+  float distance = getDistance();
+  
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  
+  // Title
+  display.setTextSize(1);
+  display.setCursor(30, 10);
+  display.println("Distance:");
+  
+  // Large distance display
+  display.setTextSize(3);
+  if (distance > 0 && distance < 400) {
+    // Valid reading
+    display.setCursor(15, 30);
+    if (distance < 100) {
+      display.print(distance, 1);  // Show 1 decimal for < 100cm
+    } else {
+      display.print((int)distance);  // No decimals for larger values
+    }
+    display.setTextSize(2);
+    display.println(" cm");
+  } else {
+    // Out of range
+    display.setTextSize(2);
+    display.setCursor(35, 30);
+    display.println("- - -");
+  }
+  
+  display.display();
+}
+
 // ============ TOUCH HANDLING ============
 void handleTouch() {
   bool currentTouch = digitalRead(TOUCH_PIN);
@@ -420,7 +462,11 @@ void handleTouch() {
         stateStartTime = millis();
         lastTapTime = 0;
       } else if (currentState == SHOWING_TIME) {
-        // Tap while showing time - go back to eyes
+        // Tap while showing time - show distance
+        currentState = SHOWING_DISTANCE;
+        lastTapTime = 0;
+      } else if (currentState == SHOWING_DISTANCE) {
+        // Tap while showing distance - go back to eyes
         currentState = IDLE;
         eyes.setMood(DEFAULT);
         eyes.setPosition(DEFAULT);
@@ -506,6 +552,13 @@ void updateState() {
     case SHOWING_TIME:
       // Display current time continuously
       displayCurrentTime();
+      
+      // Note: Tap to cycle to distance display is handled in handleTouch()
+      break;
+      
+    case SHOWING_DISTANCE:
+      // Display distance reading continuously
+      displayDistance();
       
       // Note: Tap to exit is handled in handleTouch()
       break;
