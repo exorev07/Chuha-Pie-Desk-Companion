@@ -34,6 +34,10 @@
  * DHT11 GND  -> ESP32 GND
  * DHT11 DATA -> ESP32 GPIO 14
  * 
+ * Vibration Motor VCC -> ESP32 VIN (5V)
+ * Vibration Motor GND -> ESP32 GND
+ * Vibration Motor SIG -> ESP32 GPIO 13
+ * 
  * Features:
  * - Long press (>2s): Shows happy mood with laugh animation
  * - Single tap: Cycles through time, distance, and climate displays
@@ -42,6 +46,7 @@
  * - WiFi + NTP for accurate time display
  * - Presence detection: Shows TIRED when alone, greets when someone sits down
  * - Temperature and humidity monitoring
+ * - Haptic feedback on touch interactions
  */
 
 #include <SPI.h>
@@ -71,6 +76,7 @@ const int DAYLIGHT_OFFSET_SEC = 0;   // India doesn't use daylight saving
 #define TRIG_PIN    26  // HC-SR04 Trigger
 #define ECHO_PIN    27  // HC-SR04 Echo
 #define DHT_PIN     14  // DHT11 Data
+#define VIBRATION_PIN 13 // Vibration Motor
 
 // ============ DHT11 SENSOR CONFIG ============
 #define DHT_TYPE DHT11
@@ -95,6 +101,8 @@ unsigned long touchStartTime = 0;
 unsigned long touchDuration = 0;
 unsigned long lastTapTime = 0;
 bool isLongPress = false;
+unsigned long lastAffectionVibration = 0;  // Track vibration timing for affection mode
+int bonkVibrationPulse = 0;                // Track which pulse we're on for bonk pattern
 
 // ============ PRESENCE DETECTION ============
 bool personPresent = false;
@@ -166,6 +174,10 @@ void setup() {
   // Setup ultrasonic sensor
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
+  
+  // Setup vibration motor (simple digitalWrite for better motor spin-up)
+  pinMode(VIBRATION_PIN, OUTPUT);
+  digitalWrite(VIBRATION_PIN, LOW);
 }
 
 // ============ MAIN LOOP ============
@@ -352,7 +364,7 @@ void displayCurrentTime() {
     display.setTextSize(1);
     display.setTextColor(SSD1306_WHITE);
     display.setCursor(15, 25);
-    display.println("Time unavailable :(");
+    display.println("Time unavailable!");
     display.display();
     return;
   }
@@ -414,9 +426,8 @@ void displayDistance() {
     display.println("cm");
   } else {
     // Out of range
-    display.setTextSize(2);
-    display.setCursor(35, 30);
-    display.println("- - -");
+    display.setCursor(25, 30);
+    display.println("---");
   }
   
   display.display();
@@ -482,6 +493,24 @@ void displayHumidity() {
   display.display();
 }
 
+// ============ HAPTIC FEEDBACK ============
+void vibrate(int duration) {
+  digitalWrite(VIBRATION_PIN, HIGH);
+  delay(duration);
+  digitalWrite(VIBRATION_PIN, LOW);
+}
+
+void vibratePattern(int pulses, int pulseDuration, int gapDuration) {
+  for (int i = 0; i < pulses; i++) {
+    digitalWrite(VIBRATION_PIN, HIGH);
+    delay(pulseDuration);
+    digitalWrite(VIBRATION_PIN, LOW);
+    if (i < pulses - 1) {
+      delay(gapDuration);
+    }
+  }
+}
+
 // ============ TOUCH HANDLING ============
 void handleTouch() {
   bool currentTouch = digitalRead(TOUCH_PIN);
@@ -513,6 +542,8 @@ void handleTouch() {
     else if (touchDuration >= 2000) {
       if (!isLongPress) {
         isLongPress = true;
+        vibrate(200);  // Initial long press haptic feedback
+        lastAffectionVibration = millis();  // Track for periodic vibrations
         currentState = SHOWING_AFFECTION;
         stateStartTime = millis();
       }
@@ -536,21 +567,26 @@ void handleTouch() {
         // DOUBLE TAP!
         currentState = BONKED;
         stateStartTime = millis();
+        bonkVibrationPulse = 0;  // Reset pulse counter for vibration pattern
         lastTapTime = 0;
       } else if (currentState == SHOWING_TIME) {
         // Tap while showing time - show distance
+        vibrate(200);  // Consistent pulse for screen cycle
         currentState = SHOWING_DISTANCE;
         lastTapTime = 0;
       } else if (currentState == SHOWING_DISTANCE) {
         // Tap while showing distance - show temperature
+        vibrate(200);  // Medium pulse for screen cycle
         currentState = SHOWING_TEMPERATURE;
         lastTapTime = 0;
       } else if (currentState == SHOWING_TEMPERATURE) {
         // Tap while showing temperature - show humidity
+        vibrate(200);  // Medium pulse for screen cycle
         currentState = SHOWING_HUMIDITY;
         lastTapTime = 0;
       } else if (currentState == SHOWING_HUMIDITY) {
         // Tap while showing humidity - go back to eyes
+        vibrate(200);  // Medium pulse for screen cycle
         currentState = IDLE;
         eyes.setMood(DEFAULT);
         eyes.setPosition(DEFAULT);
@@ -610,24 +646,35 @@ void updateState() {
       }
       break;
       
-    case SHOWING_AFFECTION:
-      // Show happy with laugh animation - multiple laughs
+    case SHOWING_AFFECTION: {
+      // Show happy with laugh animation - continuous loop while touched
       eyes.setMood(HAPPY);
-      if (stateTime < 50 || (stateTime > 800 && stateTime < 850) || (stateTime > 1600 && stateTime < 1650)) {
+      
+      // Repeat laugh animation every 2 seconds (3 laughs per cycle)
+      unsigned long cycleTime = stateTime % 2000;  // Loop every 2 seconds
+      if (cycleTime < 50 || (cycleTime > 600 && cycleTime < 650) || (cycleTime > 1200 && cycleTime < 1250)) {
         eyes.anim_laugh();
       }
       
-      // Show for 3 seconds with multiple laughs
-      if (stateTime > 3000 || !digitalRead(TOUCH_PIN)) {
+      // Periodic vibration every 1 second while held
+      if (millis() - lastAffectionVibration >= 1000) {
+        vibrate(200);
+        lastAffectionVibration = millis();
+      }
+      
+      // Only exit when touch is released
+      if (!digitalRead(TOUCH_PIN)) {
         currentState = RECOVERING;
         stateStartTime = millis();
       }
       break;
+    }
       
     case WAITING_FOR_SECOND_TAP:
       // Wait for potential second tap
       if (stateTime > 500) {
         // Timeout - it was a single tap, show time
+        vibrate(200);  // Single tap confirmed feedback - consistent 200ms
         currentState = SHOWING_TIME;
         stateStartTime = millis();
       }
@@ -661,32 +708,49 @@ void updateState() {
       // Note: Tap to exit is handled in handleTouch()
       break;
       
-    case BONKED:
-      // Show bonked animation with timing
-      if (stateTime < 1000) {
-        // Phase 1: Confused animation
-        if (stateTime < 200) {
-          eyes.setMood(TIRED);
-          eyes.setVFlicker(true, 5);
+    case BONKED: {
+      // Show bonked animation with timing + vibration pulses synced with animation
+      
+      // Non-blocking vibration pattern: 6 pulses of 100ms with 50ms gaps, starting at 100ms
+      if (stateTime >= 100 && stateTime < 1000) {
+        // Calculate which vibration pulse we should be in
+        unsigned long patternTime = stateTime - 100;  // Time since pattern started
+        int currentPulse = patternTime / 150;  // Each pulse+gap = 150ms
+        int withinPulse = patternTime % 150;    // Position within current pulse cycle
+        
+        // Turn vibration on/off based on position
+        if (currentPulse < 6 && withinPulse < 100) {
+          digitalWrite(VIBRATION_PIN, HIGH);  // Pulse on
+        } else {
+          digitalWrite(VIBRATION_PIN, LOW);   // Gap or done
         }
       }
+      
+      if (stateTime < 1100) {
+        // Phase 1: Confused animation with vertical flicker - synced with vibration pulses
+        eyes.setMood(TIRED);
+        eyes.setVFlicker(true, 5);
+      }
       else if (stateTime < 3000) {
+          digitalWrite(VIBRATION_PIN, LOW);  // Ensure vibration is off
           eyes.setVFlicker(false, 5);
           eyes.setMood(TIRED);
       }
-      else if (stateTime < 8000) {
-        // Phase 2: Show angry (no flicker)
-        if (stateTime < 7000) {
-          eyes.setMood(ANGRY);
-        }
+      else if (stateTime < 6000) {
+        // Phase 2: Show angry with CONTINUOUS vibration (3 seconds)
+        eyes.setMood(ANGRY);
+        // Turn on continuous vibration during angry phase
+        digitalWrite(VIBRATION_PIN, HIGH);
       }
       else {
-        // Phase 3: Recovery
+        // Phase 3: Recovery - turn off vibration
+        digitalWrite(VIBRATION_PIN, LOW);
         eyes.setMood(DEFAULT);
         currentState = RECOVERING;
         stateStartTime = millis();
       }
       break;
+    }
       
     case RECOVERING:
       // Slow return to normal
