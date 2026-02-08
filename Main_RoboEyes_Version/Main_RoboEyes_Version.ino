@@ -5,6 +5,7 @@
  * - ESP32 DevKit V1
  * - 7-Pin SSD1306 OLED (128x64, SPI)
  * - TTP223 Capacitive Touch Sensor
+ * - HC-SR04 Ultrasonic Distance Sensor
  * 
  * Pin Connections:
  * OLED GND  -> ESP32 GND
@@ -19,12 +20,23 @@
  * TTP223 GND -> ESP32 GND
  * TTP223 SIG -> ESP32 GPIO 15
  * 
+ * HC-SR04 VCC  -> ESP32 VIN or 5V pin
+ * HC-SR04 GND  -> ESP32 GND
+ * HC-SR04 TRIG -> ESP32 GPIO 26
+ * HC-SR04 ECHO -> VOLTAGE DIVIDER -> ESP32 GPIO 27
+ * 
+ * ⚠️ IMPORTANT: HC-SR04 ECHO outputs 5V but ESP32 GPIO is 3.3V tolerant!
+ * Use voltage divider on ECHO pin:
+ *   ECHO -> 1kΩ resistor -> GPIO 27 -> 2kΩ resistor -> GND
+ *   This divides 5V to ~3.3V (safe for ESP32)
+ * 
  * Features:
  * - Long press (>2s): Shows happy mood with laugh animation
  * - Single tap: Displays current time from NTP
  * - Double tap: Dizzy/confused animation with vertical flicker and angry mood
  * - Auto blink and idle movements
  * - WiFi + NTP for accurate time display
+ * - Presence detection: Shows TIRED when alone, greets when someone sits down
  */
 
 #include <SPI.h>
@@ -50,6 +62,12 @@ const int DAYLIGHT_OFFSET_SEC = 0;   // India doesn't use daylight saving
 #define OLED_CS     5
 #define OLED_RESET  4
 #define TOUCH_PIN   15
+#define TRIG_PIN    26  // HC-SR04 Trigger
+#define ECHO_PIN    27  // HC-SR04 Echo
+
+// ============ DISTANCE SENSOR CONFIG ============
+#define DETECTION_DISTANCE 15  // Distance in cm to detect presence (adjust as needed)
+#define DISTANCE_CHECK_INTERVAL 500  // Check distance every 500ms
 
 // ============ DISPLAY SETUP ============
 #define SCREEN_WIDTH  128
@@ -66,6 +84,19 @@ unsigned long touchStartTime = 0;
 unsigned long touchDuration = 0;
 unsigned long lastTapTime = 0;
 bool isLongPress = false;
+
+// ============ PRESENCE DETECTION ============
+bool personPresent = false;
+bool wasPersonPresent = false;
+unsigned long lastDistanceCheck = 0;
+unsigned long greetingStartTime = 0;
+enum GreetingState {
+  NO_GREETING,
+  GREETING_CURIOUS,
+  GREETING_HAPPY,
+  GREETING_DONE
+};
+GreetingState greetingState = NO_GREETING;
 
 // ============ ANIMATION STATE ============
 enum State {
@@ -113,10 +144,15 @@ void setup() {
   
   // Setup touch sensor
   pinMode(TOUCH_PIN, INPUT);
+  
+  // Setup ultrasonic sensor
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
 }
 
 // ============ MAIN LOOP ============
 void loop() {
+  checkPresence();
   handleTouch();
   updateState();
   
@@ -177,6 +213,67 @@ void wakeUpEyes() {
   
   eyes.setMood(DEFAULT);
   eyes.setPosition(DEFAULT);
+}
+
+// ============ DISTANCE MEASUREMENT ============
+long getDistance() {
+  // Clear the trigger
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  
+  // Send 10 microsecond pulse
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+  
+  // Read the echo
+  long duration = pulseIn(ECHO_PIN, HIGH, 30000); // 30ms timeout
+  
+  // Calculate distance in cm
+  long distance = duration * 0.034 / 2;
+  
+  return distance;
+}
+
+// ============ PRESENCE DETECTION ============
+void checkPresence() {
+  // Only check at intervals to avoid constant polling
+  if (millis() - lastDistanceCheck < DISTANCE_CHECK_INTERVAL) {
+    return;
+  }
+  lastDistanceCheck = millis();
+  
+  long distance = getDistance();
+  wasPersonPresent = personPresent;
+  
+  // Detect if someone is within detection range
+  if (distance > 0 && distance < DETECTION_DISTANCE) {
+    personPresent = true;
+  } else {
+    personPresent = false;
+  }
+  
+  // Check for state transitions
+  if (personPresent && !wasPersonPresent) {
+    // Person just arrived - start greeting sequence
+    greetingState = GREETING_CURIOUS;
+    greetingStartTime = millis();
+  } else if (!personPresent && wasPersonPresent) {
+    // Person left - reset greeting
+    greetingState = NO_GREETING;
+  }
+  
+  // Update greeting sequence
+  if (greetingState != NO_GREETING && greetingState != GREETING_DONE) {
+    unsigned long greetingTime = millis() - greetingStartTime;
+    
+    if (greetingState == GREETING_CURIOUS && greetingTime > 1000) {
+      greetingState = GREETING_HAPPY;
+      greetingStartTime = millis();
+    } else if (greetingState == GREETING_HAPPY && greetingTime > 3000) {
+      greetingState = GREETING_DONE;
+    }
+  }
 }
 
 // ============ WIFI CONNECTION ============
@@ -348,7 +445,27 @@ void updateState() {
   
   switch(currentState) {
     case IDLE:
-      // Normal idle behavior - RoboEyes handles this automatically
+      // Handle presence-based behavior
+      if (!personPresent) {
+        // Nobody detected - show tired
+        eyes.setMood(TIRED);
+      } else {
+        // Someone present - check greeting sequence
+        if (greetingState == GREETING_CURIOUS) {
+          eyes.setMood(DEFAULT);
+          eyes.setCuriosity(true);
+          eyes.setPosition(N);  // Look up curiously
+        } else if (greetingState == GREETING_HAPPY) {
+          eyes.setMood(HAPPY);
+          eyes.setCuriosity(false);
+          eyes.setPosition(DEFAULT);
+        } else {
+          // Greeting done or no greeting - normal idle
+          eyes.setMood(DEFAULT);
+          eyes.setCuriosity(false);
+          // RoboEyes idle movements handle the rest
+        }
+      }
       break;
       
     case LONG_PRESS_BUILDING:
