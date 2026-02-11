@@ -73,17 +73,17 @@ const int DAYLIGHT_OFFSET_SEC = 0;   // India doesn't use daylight saving
 #define OLED_CS     5
 #define OLED_RESET  4
 #define TOUCH_PIN   15
-#define TRIG_PIN    26  // HC-SR04 Trigger
-#define ECHO_PIN    27  // HC-SR04 Echo
-#define DHT_PIN     14  // DHT11 Data
-#define VIBRATION_PIN 13 // Vibration Motor
+#define TRIG_PIN    26
+#define ECHO_PIN    27 
+#define DHT_PIN     14 
+#define VIBRATION_PIN 13
 
 // ============ DHT11 SENSOR CONFIG ============
 #define DHT_TYPE DHT11
 DHT dht(DHT_PIN, DHT_TYPE);
 
 // ============ DISTANCE SENSOR CONFIG ============
-#define DETECTION_DISTANCE 15  // Distance in cm to detect presence (adjust as needed)
+#define DETECTION_DISTANCE 50  // Distance in cm to detect presence (adjust as needed)
 #define DISTANCE_CHECK_INTERVAL 500  // Check distance every 500ms
 
 // ============ DISPLAY SETUP ============
@@ -125,6 +125,8 @@ enum State {
   SHOWING_AFFECTION,
   WAITING_FOR_SECOND_TAP,
   SHOWING_TIME,
+  POMODORO_SELECT,
+  POMODORO_RUNNING,
   SHOWING_DISTANCE,
   SHOWING_TEMPERATURE,
   SHOWING_HUMIDITY,
@@ -134,6 +136,16 @@ enum State {
 
 State currentState = IDLE;
 unsigned long stateStartTime = 0;
+
+// ============ POMODORO CONFIG ============
+const int pomodoroOptions[] = {30, 45, 60, 90, 120};  // Minutes
+const char* pomodoroLabels[] = {"30 Min", "45 Min", "1 Hr", "1.5 Hr", "2 Hr"};
+int pomodoroSelected = 0;               // Currently highlighted option (0-4)
+unsigned long pomodoroSelectionTime = 0; // When current option was selected
+unsigned long pomodoroEndTime = 0;       // When the timer should end
+bool pomodoroTouchHandled = false;       // Prevent multiple triggers per long press
+bool pomodoroPaused = false;             // Whether the timer is paused
+unsigned long pomodoroPausedRemaining = 0; // Remaining time when paused (ms)
 
 // ============ SETUP ============
 void setup() {
@@ -187,7 +199,7 @@ void loop() {
   updateState();
   
   // Only update eyes when not showing info displays
-  if (currentState != SHOWING_TIME && currentState != SHOWING_DISTANCE && currentState != SHOWING_TEMPERATURE && currentState != SHOWING_HUMIDITY) {
+  if (currentState != SHOWING_TIME && currentState != SHOWING_DISTANCE && currentState != SHOWING_TEMPERATURE && currentState != SHOWING_HUMIDITY && currentState != POMODORO_SELECT && currentState != POMODORO_RUNNING) {
     eyes.update();
   }
 }
@@ -493,6 +505,95 @@ void displayHumidity() {
   display.display();
 }
 
+// ============ POMODORO DISPLAY ============
+void displayPomodoroSelect() {
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  
+  // Title
+  display.setTextSize(1);
+  display.setCursor(10, 2);
+  display.println("Pomodoro:");
+  
+  // Show all 5 options, highlight selected
+  for (int i = 0; i < 5; i++) {
+    int y = 14 + i * 10;
+    display.setCursor(20, y);
+    
+    if (i == pomodoroSelected) {
+      // Highlight: draw filled rect behind selected option
+      display.fillRect(16, y - 1, 96, 10, SSD1306_WHITE);
+      display.setTextColor(SSD1306_BLACK);
+      display.print("> ");
+      display.println(pomodoroLabels[i]);
+      display.setTextColor(SSD1306_WHITE);
+    } else {
+      display.print("  ");
+      display.println(pomodoroLabels[i]);
+    }
+  }
+  
+  // Show countdown to auto-start
+  unsigned long elapsed = millis() - pomodoroSelectionTime;
+  int remaining = 10 - (elapsed / 1000);
+  if (remaining < 0) remaining = 0;
+  
+  display.setCursor(100, 2);
+  display.print(remaining);
+  display.print("s");
+  
+  display.display();
+}
+
+void displayPomodoroCountdown() {
+  unsigned long remaining = 0;
+  if (pomodoroPaused) {
+    remaining = pomodoroPausedRemaining;
+  } else if (millis() < pomodoroEndTime) {
+    remaining = pomodoroEndTime - millis();
+  }
+  
+  unsigned long totalSecs = remaining / 1000;
+  int hours = totalSecs / 3600;
+  int mins = (totalSecs % 3600) / 60;
+  int secs = totalSecs % 60;
+  
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  
+  // Title - show "Paused" instead of time mode label when paused
+  display.setTextSize(1);
+  display.setCursor(10, 5);
+  display.print("Pomodoro: ");
+  if (pomodoroPaused) {
+    display.print("Paused");
+  } else {
+    display.print(pomodoroLabels[pomodoroSelected]);
+  }
+  
+  // Large countdown
+  char timeStr[10];
+  if (hours > 0) {
+    sprintf(timeStr, "%d:%02d:%02d", hours, mins, secs);
+    display.setTextSize(2);
+    display.setCursor(15, 25);
+  } else {
+    sprintf(timeStr, "%02d:%02d", mins, secs);
+    display.setTextSize(3);
+    display.setCursor(25, 22);
+  }
+  display.println(timeStr);
+  
+  // Progress bar
+  unsigned long totalTime = (unsigned long)pomodoroOptions[pomodoroSelected] * 60000UL;
+  unsigned long elapsed = totalTime - remaining;
+  int barWidth = map(elapsed, 0, totalTime, 0, 120);
+  display.drawRect(4, 55, 120, 7, SSD1306_WHITE);
+  display.fillRect(4, 55, barWidth, 7, SSD1306_WHITE);
+  
+  display.display();
+}
+
 // ============ HAPTIC FEEDBACK ============
 void vibrate(int duration) {
   digitalWrite(VIBRATION_PIN, HIGH);
@@ -525,27 +626,60 @@ void handleTouch() {
   if (currentTouch) {
     touchDuration = millis() - touchStartTime;
     
-    // Short press building (0-1s)
-    if (touchDuration < 1000) {
-      if (currentState == IDLE) {
-        // Just show normal eyes, wait for release or long press
+    // Pomodoro select: hold cycles options every 600ms
+    if (currentState == POMODORO_SELECT) {
+      if (touchDuration >= 600 && !isLongPress) {
+        isLongPress = true;  // First cycle at 600ms
+        pomodoroSelected = (pomodoroSelected + 1) % 5;
+        pomodoroSelectionTime = millis();  // Reset 10s auto-start countdown
+        lastAffectionVibration = millis();  // Reuse as repeat timer
+        vibrate(150);
+      }
+      // Keep cycling every 800ms while held
+      if (isLongPress && (millis() - lastAffectionVibration >= 800)) {
+        pomodoroSelected = (pomodoroSelected + 1) % 5;
+        pomodoroSelectionTime = millis();
+        lastAffectionVibration = millis();
+        vibrate(150);
       }
     }
-    // Long press building (1-2s)
-    else if (touchDuration < 2000) {
-      if (!isLongPress && currentState != LONG_PRESS_BUILDING) {
-        currentState = LONG_PRESS_BUILDING;
-        stateStartTime = millis();
-      }
-    }
-    // Very long press - show affection! (>2s)
-    else if (touchDuration >= 2000) {
-      if (!isLongPress) {
+    // Pomodoro running: long press exits
+    else if (currentState == POMODORO_RUNNING) {
+      if (touchDuration >= 2000 && !isLongPress) {
         isLongPress = true;
-        vibrate(200);  // Initial long press haptic feedback
-        lastAffectionVibration = millis();  // Track for periodic vibrations
-        currentState = SHOWING_AFFECTION;
+        vibratePattern(3, 150, 75);
+        pomodoroPaused = false;
+        currentState = IDLE;
+        eyes.setMood(DEFAULT);
+        eyes.setPosition(DEFAULT);
         stateStartTime = millis();
+      }
+    }
+    // Normal touch handling for all other states
+    else {
+      // Short press building (0-1s)
+      if (touchDuration < 1000) {
+        if (currentState == IDLE) {
+          // Just show normal eyes, wait for release or long press
+        }
+      }
+      // Long press building (1-2s)
+      else if (touchDuration < 2000) {
+        if (!isLongPress && currentState != LONG_PRESS_BUILDING) {
+          currentState = LONG_PRESS_BUILDING;
+          stateStartTime = millis();
+        }
+      }
+      // Very long press - show affection! (>2s)
+      else if (touchDuration >= 2000) {
+        if (!isLongPress) {
+          isLongPress = true;
+          // Normal long press - show affection
+          vibrate(200);  // Initial long press haptic feedback
+          lastAffectionVibration = millis();  // Track for periodic vibrations
+          currentState = SHOWING_AFFECTION;
+          stateStartTime = millis();
+        }
       }
     }
   }
@@ -570,9 +704,31 @@ void handleTouch() {
         bonkVibrationPulse = 0;  // Reset pulse counter for vibration pattern
         lastTapTime = 0;
       } else if (currentState == SHOWING_TIME) {
-        // Tap while showing time - show distance
-        vibrate(200);  // Consistent pulse for screen cycle
+        // Tap while showing time - show pomodoro selection
+        vibrate(200);
+        currentState = POMODORO_SELECT;
+        pomodoroSelected = 0;
+        pomodoroSelectionTime = millis();
+        pomodoroTouchHandled = false;
+        stateStartTime = millis();
+        lastTapTime = 0;
+      } else if (currentState == POMODORO_SELECT) {
+        // Tap while in pomodoro select - move forward to distance
+        vibrate(200);
         currentState = SHOWING_DISTANCE;
+        lastTapTime = 0;
+      } else if (currentState == POMODORO_RUNNING) {
+        // Tap while pomodoro running - toggle pause/resume
+        vibrate(200);
+        if (pomodoroPaused) {
+          // Resume: recalculate end time from saved remaining
+          pomodoroEndTime = millis() + pomodoroPausedRemaining;
+          pomodoroPaused = false;
+        } else {
+          // Pause: save remaining time
+          pomodoroPausedRemaining = pomodoroEndTime - millis();
+          pomodoroPaused = true;
+        }
         lastTapTime = 0;
       } else if (currentState == SHOWING_DISTANCE) {
         // Tap while showing distance - show temperature
@@ -656,24 +812,16 @@ void updateState() {
         eyes.anim_laugh();
       }
       
-      // Initial rapid vibration pulses synced with first laughs (first 2 seconds)
-      if (stateTime < 2000) {
-        // 10 pulses: 100ms on, 100ms off (each cycle is 200ms)
-        int currentPulse = stateTime / 200;       // Which pulse cycle we're in
-        int withinPulse = stateTime % 200;        // Position within current cycle
-        
-        if (currentPulse < 10 && withinPulse < 100) {
-          digitalWrite(VIBRATION_PIN, HIGH);
-        } else {
-          digitalWrite(VIBRATION_PIN, LOW);
-        }
-      }
-      // After initial phase, periodic vibration every 100ms while held
-      else {
-        if (millis() - lastAffectionVibration >= 100) {
-          vibrate(200);
-          lastAffectionVibration = millis();
-        }
+      // Continuous rapid vibration pulses synced with laughs (repeating every 2 seconds)
+      unsigned long pulseTime = stateTime % 2000;  // Loop every 2 seconds
+      // 10 pulses: 100ms on, 100ms off (each cycle is 200ms)
+      int currentPulse = pulseTime / 200;       // Which pulse cycle we're in
+      int withinPulse = pulseTime % 200;        // Position within current cycle
+      
+      if (currentPulse < 10 && withinPulse < 100) {
+        digitalWrite(VIBRATION_PIN, HIGH);
+      } else {
+        digitalWrite(VIBRATION_PIN, LOW);
       }
       
       // Only exit when touch is released
@@ -702,6 +850,36 @@ void updateState() {
       // Note: Tap to cycle to distance display is handled in handleTouch()
       break;
       
+    case POMODORO_SELECT: {
+      // Pomodoro selection screen
+      displayPomodoroSelect();
+      
+      // Auto-start if same option stays selected for 10 seconds (no touches)
+      if (millis() - pomodoroSelectionTime >= 10000) {
+        vibrate(200);
+        pomodoroEndTime = millis() + ((unsigned long)pomodoroOptions[pomodoroSelected] * 60000UL);
+        pomodoroPaused = false;
+        currentState = POMODORO_RUNNING;
+        stateStartTime = millis();
+      }
+      break;
+    }
+    
+    case POMODORO_RUNNING:
+      // Show countdown timer
+      displayPomodoroCountdown();
+      
+      // Check if timer is done (only when not paused)
+      if (!pomodoroPaused && millis() >= pomodoroEndTime) {
+        // Timer complete! Vibrate alert
+        vibratePattern(5, 200, 200);  // 5 long pulses to alert
+        pomodoroPaused = false;
+        currentState = IDLE;
+        eyes.setMood(HAPPY);
+        stateStartTime = millis();
+      }
+      break;
+    
     case SHOWING_DISTANCE:
       // Display distance reading continuously
       displayDistance();
