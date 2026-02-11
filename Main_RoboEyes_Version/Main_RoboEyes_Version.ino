@@ -127,6 +127,7 @@ enum State {
   SHOWING_TIME,
   POMODORO_SELECT,
   POMODORO_RUNNING,
+  POMODORO_DONE,
   SHOWING_DISTANCE,
   SHOWING_TEMPERATURE,
   SHOWING_HUMIDITY,
@@ -647,7 +648,7 @@ void handleTouch() {
     else if (currentState == POMODORO_RUNNING) {
       if (touchDuration >= 2000 && !isLongPress) {
         isLongPress = true;
-        vibratePattern(3, 150, 75);
+        vibratePattern(3, 200, 200);
         pomodoroPaused = false;
         currentState = IDLE;
         eyes.setMood(DEFAULT);
@@ -871,14 +872,40 @@ void updateState() {
       
       // Check if timer is done (only when not paused)
       if (!pomodoroPaused && millis() >= pomodoroEndTime) {
-        // Timer complete! Vibrate alert
-        vibratePattern(5, 200, 200);  // 5 long pulses to alert
+        // Timer complete! Move to celebration phase
         pomodoroPaused = false;
-        currentState = IDLE;
-        eyes.setMood(HAPPY);
+        currentState = POMODORO_DONE;
         stateStartTime = millis();
       }
       break;
+    
+    case POMODORO_DONE: {
+      // Celebration phase - 5 seconds of happy + laugh + vibration
+      eyes.setMood(HAPPY);
+      
+      // Laugh animation every 2 seconds (same pattern as affection)
+      unsigned long celebCycle = stateTime % 2000;
+      if (celebCycle < 50 || (celebCycle > 600 && celebCycle < 650) || (celebCycle > 1200 && celebCycle < 1250)) {
+        eyes.anim_laugh();
+      }
+      
+      // Vibration pulses: 100ms on, 100ms off (repeating)
+      unsigned long celebPulse = stateTime % 200;
+      if (celebPulse < 100) {
+        digitalWrite(VIBRATION_PIN, HIGH);
+      } else {
+        digitalWrite(VIBRATION_PIN, LOW);
+      }
+      
+      // After 5 seconds, return to idle
+      if (stateTime >= 5000) {
+        digitalWrite(VIBRATION_PIN, LOW);
+        currentState = IDLE;
+        eyes.setMood(DEFAULT);
+        stateStartTime = millis();
+      }
+      break;
+    }
     
     case SHOWING_DISTANCE:
       // Display distance reading continuously
