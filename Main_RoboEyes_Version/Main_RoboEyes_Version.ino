@@ -110,6 +110,10 @@ bool wasPersonPresent = false;
 unsigned long lastDistanceCheck = 0;
 unsigned long greetingStartTime = 0;
 unsigned long lastDistanceDisplayUpdate = 0;
+bool rawPresenceDetected = false;           // Raw sensor reading
+unsigned long presenceChangeTime = 0;       // When raw detection last changed
+#define PRESENCE_GONE_DELAY 5000            // 10s before marking absent
+#define PRESENCE_ARRIVE_DELAY 700           // 1s before marking present
 enum GreetingState {
   NO_GREETING,
   GREETING_CURIOUS,
@@ -256,6 +260,12 @@ void wakeUpEyes() {
   
   eyes.setMood(DEFAULT);
   eyes.setPosition(DEFAULT);
+  
+  // Let eyes settle to center position before entering main loop
+  for(int i = 0; i < 30; i++) {
+    eyes.update();
+    delay(33);  // ~30fps for 1 second
+  }
 }
 
 // ============ DISTANCE MEASUREMENT ============
@@ -289,11 +299,26 @@ void checkPresence() {
   float distance = getDistance();
   wasPersonPresent = personPresent;
   
-  // Detect if someone is within detection range
-  if (distance > 0 && distance < DETECTION_DISTANCE) {
-    personPresent = true;
-  } else {
-    personPresent = false;
+  // Get raw sensor reading
+  bool currentlyDetected = (distance > 0 && distance < DETECTION_DISTANCE);
+  
+  // Track when raw detection state changed
+  if (currentlyDetected != rawPresenceDetected) {
+    rawPresenceDetected = currentlyDetected;
+    presenceChangeTime = millis();
+  }
+  
+  // Debounced presence: require sustained detection/absence
+  if (rawPresenceDetected && !personPresent) {
+    // Someone detected but not yet confirmed — wait 1 second
+    if (millis() - presenceChangeTime >= PRESENCE_ARRIVE_DELAY) {
+      personPresent = true;
+    }
+  } else if (!rawPresenceDetected && personPresent) {
+    // No one detected but still marked present — wait 10 seconds
+    if (millis() - presenceChangeTime >= PRESENCE_GONE_DELAY) {
+      personPresent = false;
+    }
   }
   
   // Check for state transitions
