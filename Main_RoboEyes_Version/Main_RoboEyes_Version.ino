@@ -112,8 +112,8 @@ unsigned long greetingStartTime = 0;
 unsigned long lastDistanceDisplayUpdate = 0;
 bool rawPresenceDetected = false;           // Raw sensor reading
 unsigned long presenceChangeTime = 0;       // When raw detection last changed
-#define PRESENCE_GONE_DELAY 5000            // 10s before marking absent
-#define PRESENCE_ARRIVE_DELAY 700           // 1s before marking present
+#define PRESENCE_GONE_DELAY 5000            // 5s before marking absent
+#define PRESENCE_ARRIVE_DELAY 700           // 700ms before marking present
 enum GreetingState {
   NO_GREETING,
   GREETING_CURIOUS,
