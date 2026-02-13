@@ -179,20 +179,11 @@ void setup() {
   eyes.setBorderradius(10, 10);
   eyes.setSpacebetween(15);
   
-  // Show startup message
-  showStartupMessage();
-  
-  // Connect to WiFi
-  connectToWiFi();
-  
-  // Wake up eyes
-  wakeUpEyes();
-  
-  // Initialize DHT sensor
-  dht.begin();
-  
-  // Setup touch sensor
-  pinMode(TOUCH_PIN, INPUT);
+  showStartupMessage(); // Show startup message
+  connectToWiFi(); // Connect to WiFi
+  wakeUpEyes(); // Wake up eyes
+  dht.begin(); // Initialize DHT sensor
+  pinMode(TOUCH_PIN, INPUT); // Setup touch sensor
   
   // Setup ultrasonic sensor
   pinMode(TRIG_PIN, OUTPUT);
