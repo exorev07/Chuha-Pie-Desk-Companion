@@ -122,6 +122,11 @@ enum GreetingState {
 };
 GreetingState greetingState = NO_GREETING;
 
+// ============ BREAK REMINDER ============
+unsigned long continuousPresenceStart = 0;   // When person was first detected
+bool breakReminderShown = false;             // Prevent repeated reminders
+#define BREAK_REMINDER_INTERVAL 3600000UL    // 1 hour in ms
+
 // ============ ANIMATION STATE ============
 enum State {
   IDLE,
@@ -136,7 +141,8 @@ enum State {
   SHOWING_TEMPERATURE,
   SHOWING_HUMIDITY,
   BONKED,
-  RECOVERING
+  RECOVERING,
+  BREAK_REMINDER
 };
 
 State currentState = IDLE;
@@ -204,7 +210,7 @@ void loop() {
   updateState();
   
   // Only update eyes when not showing info displays
-  if (currentState != SHOWING_TIME && currentState != SHOWING_DISTANCE && currentState != SHOWING_TEMPERATURE && currentState != SHOWING_HUMIDITY && currentState != POMODORO_SELECT && currentState != POMODORO_RUNNING) {
+  if (currentState != SHOWING_TIME && currentState != SHOWING_DISTANCE && currentState != SHOWING_TEMPERATURE && currentState != SHOWING_HUMIDITY && currentState != POMODORO_SELECT && currentState != POMODORO_RUNNING && currentState != BREAK_REMINDER) {
     eyes.update();
   }
 }
@@ -326,9 +332,12 @@ void checkPresence() {
     // Person just arrived - start greeting sequence
     greetingState = GREETING_CURIOUS;
     greetingStartTime = millis();
+    continuousPresenceStart = millis();  // Start tracking for break reminder
+    breakReminderShown = false;
   } else if (!personPresent && wasPersonPresent) {
-    // Person left - reset greeting
+    // Person left - reset greeting and break timer
     greetingState = NO_GREETING;
+    breakReminderShown = false;
   }
   
   // Update greeting sequence
@@ -638,6 +647,29 @@ void vibratePattern(int pulses, int pulseDuration, int gapDuration) {
   }
 }
 
+// ============ BREAK REMINDER DISPLAY ============
+void displayBreakReminder() {
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  
+  // Draw border
+  display.drawRect(0, 0, 128, 64, SSD1306_WHITE);
+  display.drawRect(1, 1, 126, 62, SSD1306_WHITE);
+  
+  // Main message centered
+  display.setTextSize(1);
+  display.setCursor(14, 18);
+  display.println("Take a break,");
+  display.setCursor(14, 30);
+  display.println("Miss Sondhi :)");
+  
+  // Duration at bottom center
+  display.setCursor(43, 50);
+  display.println("1 Hour");
+  
+  display.display();
+}
+
 // ============ TOUCH HANDLING ============
 void handleTouch() {
   bool currentTouch = digitalRead(TOUCH_PIN);
@@ -798,6 +830,14 @@ void updateState() {
         // Nobody detected - show tired
         eyes.setMood(TIRED);
       } else {
+        // Check for break reminder (1 hour of continuous presence)
+        if (!breakReminderShown && (millis() - continuousPresenceStart >= BREAK_REMINDER_INTERVAL)) {
+          breakReminderShown = true;
+          currentState = BREAK_REMINDER;
+          stateStartTime = millis();
+          break;
+        }
+        
         // Someone present - check greeting sequence
         if (greetingState == GREETING_CURIOUS) {
           eyes.setMood(DEFAULT);
@@ -1007,6 +1047,30 @@ void updateState() {
       
       if (stateTime > 1000) {
         currentState = IDLE;
+      }
+      break;
+    
+    case BREAK_REMINDER:
+      // Show break reminder for 3 seconds
+      displayBreakReminder();
+      
+      // Vibration: 200ms on, 100ms off pulsating for first 2 seconds
+      if (stateTime < 2000) {
+        unsigned long pulsePos = stateTime % 300;  // 200ms on + 100ms off = 300ms cycle
+        if (pulsePos < 200) {
+          digitalWrite(VIBRATION_PIN, HIGH);
+        } else {
+          digitalWrite(VIBRATION_PIN, LOW);
+        }
+      } else {
+        digitalWrite(VIBRATION_PIN, LOW);
+      }
+      
+      // After 5 seconds, return to idle
+      if (stateTime >= 5000) {
+        digitalWrite(VIBRATION_PIN, LOW);
+        currentState = IDLE;
+        stateStartTime = millis();
       }
       break;
   }
