@@ -475,8 +475,8 @@ void displayStopwatch() {
   
   // Header - always shows "~ Stopwatch ~"
   display.setTextSize(1);
-  display.setCursor(25, 2);
-  display.println("~ Stopwatch ~");
+  display.setCursor(35, 2);
+  display.println("Stopwatch");
   display.drawLine(0, 11, 128, 11, SSD1306_WHITE);
   
   // Calculate current elapsed time
@@ -1019,8 +1019,8 @@ void displaySpotify() {
   
   // Header
   display.setTextSize(1);
-  display.setCursor(32, 2);
-  display.println("~ Spotify ~");
+  display.setCursor(40, 2);
+  display.println("Spotify");
   display.drawLine(0, 11, 128, 11, SSD1306_WHITE);
   
   // Track name
