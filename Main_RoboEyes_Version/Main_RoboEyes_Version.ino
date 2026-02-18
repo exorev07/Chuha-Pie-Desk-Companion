@@ -53,6 +53,9 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <HTTPClient.h>
+#include "base64.h"
 #include <time.h>
 #include <DHT.h>
 #include <FluxGarage_RoboEyes.h>
@@ -60,6 +63,12 @@
 // ============ WIFI CREDENTIALS ============
 const char* WIFI_SSID = "Virus.exe";
 const char* WIFI_PASSWORD = "Exorev@3727";
+
+// ============ SPOTIFY CREDENTIALS ============
+// Get these from https://developer.spotify.com/dashboard
+const char* SPOTIFY_CLIENT_ID = "6c396963e91b46e3b7ff16c763f0a669";
+const char* SPOTIFY_CLIENT_SECRET = "3444e3d5140846359851283f81b264c2";
+const char* SPOTIFY_REFRESH_TOKEN = "AQAY7FupeXQt3uukdL_VvzDLXR8GThtIuBmJUD-L6hpKYN_nVe_221tUB4nmZ00sxhN9qa3218kldwgWTKs74ds69kujunu6PshqanInKXNXw5lCL8OZCu11pbizH5_u5sg";
 
 // ============ TIME CONFIGURATION ============
 const char* NTP_SERVER = "pool.ntp.org";
@@ -134,6 +143,7 @@ enum State {
   SHOWING_AFFECTION,
   WAITING_FOR_SECOND_TAP,
   SHOWING_TIME,
+  SPOTIFY_MODE,
   POMODORO_SELECT,
   POMODORO_RUNNING,
   POMODORO_DONE,
@@ -158,8 +168,26 @@ bool pomodoroTouchHandled = false;       // Prevent multiple triggers per long p
 bool pomodoroPaused = false;             // Whether the timer is paused
 unsigned long pomodoroPausedRemaining = 0; // Remaining time when paused (ms)
 
+// ============ SPOTIFY STATE ============
+String spotifyAccessToken = "";
+unsigned long spotifyTokenExpiry = 0;       // When current token expires
+String spotifyTrackName = "";
+String spotifyArtistName = "";
+bool spotifyIsPlaying = false;
+unsigned long spotifyProgressMs = 0;        // Current position in ms
+unsigned long spotifyDurationMs = 0;        // Track duration in ms
+unsigned long spotifyLastProgressUpdate = 0; // When progress was last fetched from API
+unsigned long lastSpotifyPoll = 0;
+#define SPOTIFY_POLL_INTERVAL 3000           // Poll every 3 seconds (progress interpolated between polls)
+int spotifyTapCount = 0;                     // Track taps for single/double/triple
+unsigned long spotifyLastTapTime = 0;        // When last tap happened in Spotify mode
+#define SPOTIFY_TAP_WINDOW 700               // ms to wait for more taps
+bool spotifyTapPending = false;              // Whether we're waiting for more taps
+
 // ============ SETUP ============
 void setup() {
+  Serial.begin(115200);
+  
   // Initialize display
   if(!display.begin(SSD1306_SWITCHCAPVCC)) {
     for(;;);
@@ -201,7 +229,7 @@ void loop() {
   updateState();
   
   // Only update eyes when not showing info displays
-  if (currentState != SHOWING_TIME && currentState != SHOWING_DISTANCE && currentState != SHOWING_TEMPERATURE && currentState != SHOWING_HUMIDITY && currentState != POMODORO_SELECT && currentState != POMODORO_RUNNING && currentState != BREAK_REMINDER) {
+  if (currentState != SHOWING_TIME && currentState != SHOWING_DISTANCE && currentState != SHOWING_TEMPERATURE && currentState != SHOWING_HUMIDITY && currentState != POMODORO_SELECT && currentState != POMODORO_RUNNING && currentState != BREAK_REMINDER && currentState != SPOTIFY_MODE) {
     eyes.update();
   }
 }
@@ -620,6 +648,370 @@ void displayPomodoroCountdown() {
   display.display();
 }
 
+// ============ SPOTIFY API ============
+bool spotifyRefreshAccessToken() {
+  Serial.println("[Spotify] Refreshing access token...");
+  WiFiClientSecure client;
+  client.setInsecure();  // Skip cert verification (saves RAM)
+  
+  HTTPClient http;
+  http.begin(client, "https://accounts.spotify.com/api/token");
+  http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+  
+  // Build Basic auth header using ESP32 built-in Base64
+  String credentials = String(SPOTIFY_CLIENT_ID) + ":" + String(SPOTIFY_CLIENT_SECRET);
+  String encoded = base64::encode(credentials);
+  
+  http.addHeader("Authorization", "Basic " + encoded);
+  
+  String body = "grant_type=refresh_token&refresh_token=" + String(SPOTIFY_REFRESH_TOKEN);
+  int httpCode = http.POST(body);
+  
+  Serial.print("[Spotify] Token response code: ");
+  Serial.println(httpCode);
+  
+  if (httpCode == 200) {
+    String response = http.getString();
+    // Parse access_token from JSON (simple extraction)
+    int tokenStart = response.indexOf("\"access_token\":\"") + 16;
+    int tokenEnd = response.indexOf("\"", tokenStart);
+    if (tokenStart > 15 && tokenEnd > tokenStart) {
+      spotifyAccessToken = response.substring(tokenStart, tokenEnd);
+      spotifyTokenExpiry = millis() + 3500000UL;  // ~58 minutes
+      Serial.println("[Spotify] Token refreshed OK");
+      http.end();
+      return true;
+    }
+  } else {
+    Serial.print("[Spotify] Token refresh FAILED: ");
+    Serial.println(http.getString());
+  }
+  http.end();
+  return false;
+}
+
+bool spotifyApiCall(const char* method, const char* endpoint, String* responseOut = nullptr) {
+  // Auto-refresh token if expired
+  if (millis() > spotifyTokenExpiry || spotifyAccessToken.length() == 0) {
+    if (!spotifyRefreshAccessToken()) return false;
+  }
+  
+  WiFiClientSecure client;
+  client.setInsecure();
+  
+  HTTPClient http;
+  String url = "https://api.spotify.com/v1/me/player" + String(endpoint);
+  http.begin(client, url);
+  http.addHeader("Authorization", "Bearer " + spotifyAccessToken);
+  http.addHeader("Content-Length", "0");
+  
+  int httpCode;
+  if (strcmp(method, "PUT") == 0) {
+    httpCode = http.PUT("");
+  } else if (strcmp(method, "POST") == 0) {
+    httpCode = http.POST("");
+  } else {
+    httpCode = http.GET();
+  }
+  
+  Serial.print("[Spotify] ");
+  Serial.print(method);
+  Serial.print(" ");
+  Serial.print(endpoint);
+  Serial.print(" -> ");
+  Serial.println(httpCode);
+  
+  bool success = (httpCode >= 200 && httpCode < 300);
+  if (success && responseOut && httpCode != 204) {
+    *responseOut = http.getString();
+  }
+  if (httpCode == 204 && responseOut) {
+    *responseOut = "";  // No content
+  }
+  if (!success) {
+    Serial.print("[Spotify] Error body: ");
+    Serial.println(http.getString());
+  }
+  http.end();
+  return success;
+}
+
+void spotifyPlayPause() {
+  if (spotifyIsPlaying) {
+    spotifyApiCall("PUT", "/pause");
+  } else {
+    spotifyApiCall("PUT", "/play");
+  }
+  spotifyIsPlaying = !spotifyIsPlaying;
+}
+
+void spotifyNextTrack() {
+  spotifyApiCall("POST", "/next");
+  delay(300);  // Brief delay for Spotify to update
+  spotifyGetCurrentTrack();  // Refresh display
+}
+
+void spotifyPrevTrack() {
+  spotifyApiCall("POST", "/previous");
+  delay(300);
+  spotifyGetCurrentTrack();
+}
+
+// Unescape JSON string: handles \" \/ \\ \n \u00XX etc.
+String jsonUnescape(String s) {
+  String result = "";
+  result.reserve(s.length());
+  for (int i = 0; i < (int)s.length(); i++) {
+    if (s[i] == '\\' && i + 1 < (int)s.length()) {
+      char next = s[i + 1];
+      if (next == '"') { result += '"'; i++; }
+      else if (next == '\\') { result += '\\'; i++; }
+      else if (next == '/') { result += '/'; i++; }
+      else if (next == 'n') { result += ' '; i++; }  // newline -> space
+      else if (next == 'r') { i++; }  // skip \r
+      else if (next == 't') { result += ' '; i++; }  // tab -> space
+      else if (next == 'u' && i + 5 < (int)s.length()) {
+        // \uXXXX - parse hex, keep ASCII printable, replace others with ?
+        String hex = s.substring(i + 2, i + 6);
+        long code = strtol(hex.c_str(), NULL, 16);
+        if (code >= 32 && code < 127) {
+          result += (char)code;
+        } else {
+          result += '?';  // Non-ASCII can't display on SSD1306
+        }
+        i += 5;
+      }
+      else { result += s[i]; }  // Unknown escape, keep as-is
+    } else {
+      result += s[i];
+    }
+  }
+  return result;
+}
+
+// Find the end of a JSON string value, handling escaped quotes
+int findJsonStringEnd(const String& s, int startQuote) {
+  int i = startQuote + 1;
+  while (i < (int)s.length()) {
+    if (s[i] == '\\') {
+      i += 2;  // Skip escaped character
+    } else if (s[i] == '"') {
+      return i;
+    } else {
+      i++;
+    }
+  }
+  return -1;
+}
+
+void spotifyGetCurrentTrack() {
+  String response;
+  if (spotifyApiCall("GET", "/currently-playing", &response)) {
+    Serial.print("[Spotify] Response length: ");
+    Serial.println(response.length());
+    
+    if (response.length() < 10) {
+      spotifyTrackName = "No track";
+      spotifyArtistName = "";
+      spotifyIsPlaying = false;
+      return;
+    }
+    
+    // Helper: find "key" then skip whitespace/colon to get the quoted value
+    // Spotify returns pretty-printed JSON: "key" : "value"
+    
+    // --- Parse is_playing first (top-level) ---
+    int playIdx = response.indexOf("\"is_playing\"");
+    if (playIdx >= 0) {
+      // Find colon after key, then look for true/false
+      int afterColon = response.indexOf(":", playIdx + 12);
+      if (afterColon > 0) {
+        String playVal = response.substring(afterColon + 1, afterColon + 10);
+        playVal.trim();
+        spotifyIsPlaying = playVal.startsWith("true");
+      }
+    }
+    Serial.print("[Spotify] isPlaying: ");
+    Serial.println(spotifyIsPlaying);
+    
+    // --- Find "item" object ---
+    int itemIdx = response.indexOf("\"item\"");
+    if (itemIdx < 0) {
+      Serial.println("[Spotify] No item found in response");
+      return;
+    }
+    
+    // --- Parse track name: find first "name" after "item" that's at track level ---
+    // Skip album section - find the track-level "name" by looking past "available_markets"
+    // or by finding "disc_number" which appears in the track object
+    int discIdx = response.indexOf("\"disc_number\"", itemIdx);
+    int trackNameIdx = -1;
+    if (discIdx > 0) {
+      // Track "name" comes after disc_number/duration_ms/etc
+      trackNameIdx = response.indexOf("\"name\"", discIdx);
+    }
+    if (trackNameIdx < 0) {
+      // Fallback: just find first "name" after item + some offset to skip album names
+      trackNameIdx = response.indexOf("\"name\"", itemIdx + 500);
+      if (trackNameIdx < 0) trackNameIdx = response.indexOf("\"name\"", itemIdx);
+    }
+    
+    if (trackNameIdx > 0) {
+      int colonPos = response.indexOf(":", trackNameIdx + 5);
+      if (colonPos > 0) {
+        int quoteStart = response.indexOf("\"", colonPos + 1);
+        if (quoteStart > 0) {
+          int quoteEnd = findJsonStringEnd(response, quoteStart);
+          if (quoteEnd > quoteStart + 1) {
+            spotifyTrackName = jsonUnescape(response.substring(quoteStart + 1, quoteEnd));
+            Serial.print("[Spotify] Track: ");
+            Serial.println(spotifyTrackName);
+            if (spotifyTrackName.length() > 21) {
+              spotifyTrackName = spotifyTrackName.substring(0, 19) + "..";
+            }
+          }
+        }
+      }
+    }
+    
+    // --- Parse artist name: find "artists" array after item, get first "name" ---
+    // We want the track-level artists, not album artists
+    int trackArtistIdx = -1;
+    if (discIdx > 0) {
+      trackArtistIdx = response.indexOf("\"artists\"", discIdx);
+    }
+    if (trackArtistIdx < 0) {
+      // Fallback to first artists after item
+      trackArtistIdx = response.indexOf("\"artists\"", itemIdx);
+    }
+    
+    if (trackArtistIdx > 0) {
+      int artNameIdx = response.indexOf("\"name\"", trackArtistIdx + 9);
+      if (artNameIdx > 0) {
+        int artColon = response.indexOf(":", artNameIdx + 5);
+        if (artColon > 0) {
+          int artQuoteStart = response.indexOf("\"", artColon + 1);
+          if (artQuoteStart > 0) {
+            int artQuoteEnd = findJsonStringEnd(response, artQuoteStart);
+            if (artQuoteEnd > artQuoteStart + 1) {
+              spotifyArtistName = jsonUnescape(response.substring(artQuoteStart + 1, artQuoteEnd));
+              Serial.print("[Spotify] Artist: ");
+              Serial.println(spotifyArtistName);
+              if (spotifyArtistName.length() > 21) {
+                spotifyArtistName = spotifyArtistName.substring(0, 19) + "..";
+              }
+            }
+          }
+        }
+      }
+    }
+    // --- Parse progress_ms ---
+    int progIdx = response.indexOf("\"progress_ms\"");
+    if (progIdx >= 0) {
+      int progColon = response.indexOf(":", progIdx + 13);
+      if (progColon > 0) {
+        int progStart = progColon + 1;
+        // Skip whitespace
+        while (progStart < (int)response.length() && response[progStart] == ' ') progStart++;
+        int progEnd = progStart;
+        while (progEnd < (int)response.length() && response[progEnd] >= '0' && response[progEnd] <= '9') progEnd++;
+        if (progEnd > progStart) {
+          spotifyProgressMs = response.substring(progStart, progEnd).toInt();
+          spotifyLastProgressUpdate = millis();
+        }
+      }
+    }
+    
+    // --- Parse duration_ms (inside item) ---
+    if (discIdx > 0) {
+      int durIdx = response.indexOf("\"duration_ms\"", discIdx);
+      if (durIdx > 0) {
+        int durColon = response.indexOf(":", durIdx + 13);
+        if (durColon > 0) {
+          int durStart = durColon + 1;
+          while (durStart < (int)response.length() && response[durStart] == ' ') durStart++;
+          int durEnd = durStart;
+          while (durEnd < (int)response.length() && response[durEnd] >= '0' && response[durEnd] <= '9') durEnd++;
+          if (durEnd > durStart) {
+            spotifyDurationMs = response.substring(durStart, durEnd).toInt();
+          }
+        }
+      }
+    }
+  } else {
+    Serial.println("[Spotify] GetCurrentTrack API call failed");
+  }
+}
+
+// ============ SPOTIFY DISPLAY ============
+void displaySpotify() {
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  
+  // Header
+  display.setTextSize(1);
+  display.setCursor(32, 2);
+  display.println("~ Spotify ~");
+  display.drawLine(0, 11, 128, 11, SSD1306_WHITE);
+  
+  // Track name
+  display.setTextSize(1);
+  display.setCursor(4, 16);
+  if (spotifyTrackName.length() > 0) {
+    display.println(spotifyTrackName);
+  } else {
+    display.println("Loading...");
+  }
+  
+  // Artist name
+  display.setCursor(4, 28);
+  display.setTextColor(SSD1306_WHITE);
+  display.println(spotifyArtistName);
+  
+  // Play/Pause icon (small, left side)
+  display.drawLine(0, 39, 128, 39, SSD1306_WHITE);
+  if (spotifyIsPlaying) {
+    // Pause icon (two small bars)
+    display.fillRect(4, 42, 3, 8, SSD1306_WHITE);
+    display.fillRect(10, 42, 3, 8, SSD1306_WHITE);
+  } else {
+    // Play icon (small triangle)
+    for (int i = 0; i < 8; i++) {
+      display.drawLine(4, 42 + i, 4 + (i < 4 ? i : 7 - i), 42 + i, SSD1306_WHITE);
+    }
+  }
+  
+  // Elapsed time next to icon
+  unsigned long currentProgress = spotifyProgressMs;
+  if (spotifyIsPlaying && spotifyLastProgressUpdate > 0) {
+    currentProgress += (millis() - spotifyLastProgressUpdate);
+    if (currentProgress > spotifyDurationMs) currentProgress = spotifyDurationMs;
+  }
+  int elapsedSec = currentProgress / 1000;
+  int elapsedMin = elapsedSec / 60;
+  elapsedSec %= 60;
+  int totalSec = spotifyDurationMs / 1000;
+  int totalMin = totalSec / 60;
+  totalSec %= 60;
+  
+  char timeStr[14];
+  sprintf(timeStr, "%d:%02d / %d:%02d", elapsedMin, elapsedSec, totalMin, totalSec);
+  int timeWidth = strlen(timeStr) * 6;  // 6px per char at textSize 1
+  display.setTextSize(1);
+  display.setCursor(128 - timeWidth - 2, 44);
+  display.print(timeStr);
+  
+  // Progress bar at bottom
+  display.drawRect(4, 55, 120, 7, SSD1306_WHITE);
+  if (spotifyDurationMs > 0) {
+    int barWidth = (int)((currentProgress * 116UL) / spotifyDurationMs);
+    if (barWidth > 116) barWidth = 116;
+    if (barWidth > 0) display.fillRect(6, 57, barWidth, 3, SSD1306_WHITE);
+  }
+  
+  display.display();
+}
+
 // ============ HAPTIC FEEDBACK ============
 void vibrate(int duration) {
   digitalWrite(VIBRATION_PIN, HIGH);
@@ -676,7 +1068,7 @@ void handleTouch() {
     touchDuration = millis() - touchStartTime;
     
     // Pomodoro select: hold cycles options every 600ms
-    if (currentState == POMODORO_SELECT) {
+    if (currentState == POMODORO_SELECT && !pomodoroTouchHandled) {
       if (touchDuration >= 600 && !isLongPress) {
         isLongPress = true;  // First cycle at 600ms
         pomodoroSelected = (pomodoroSelected + 1) % 5;
@@ -690,6 +1082,20 @@ void handleTouch() {
         pomodoroSelectionTime = millis();
         lastAffectionVibration = millis();
         vibrate(150);
+      }
+    }
+    // Spotify mode: long press exits
+    else if (currentState == SPOTIFY_MODE) {
+      if (touchDuration >= 2000 && !isLongPress) {
+        isLongPress = true;
+        vibrate(200);
+        spotifyTapCount = 0;
+        spotifyTapPending = false;
+        currentState = POMODORO_SELECT;
+        pomodoroSelected = 0;
+        pomodoroSelectionTime = millis();
+        pomodoroTouchHandled = true;  // Block cycling until finger lifts
+        stateStartTime = millis();
       }
     }
     // Pomodoro running: long press exits
@@ -736,29 +1142,40 @@ void handleTouch() {
   // Falling edge - touch released
   if (!currentTouch && lastTouchState) {
     touchDuration = millis() - touchStartTime;
+    pomodoroTouchHandled = false;  // Re-enable Pomodoro cycling on next touch
     
     // Handle different touch types
     if (isLongPress) {
       // Long press was shown, do nothing (already showing affection)
       isLongPress = false;
     }
-    else if (touchDuration < 300) {
-      // Quick tap detected
+    else if (touchDuration < 300 || (touchDuration < 600 && currentState == SPOTIFY_MODE)) {
+      // Quick tap detected (300ms normally, 600ms in Spotify mode for easier multi-tap)
       unsigned long timeSinceLastTap = millis() - lastTapTime;
       
-      if (timeSinceLastTap < 500 && currentState == WAITING_FOR_SECOND_TAP) {
+      if (currentState == SPOTIFY_MODE) {
+        // Spotify multi-tap: accumulate taps within window
+        spotifyTapCount++;
+        spotifyLastTapTime = millis();
+        spotifyTapPending = true;
+        // Non-blocking quick pulse feedback
+        digitalWrite(VIBRATION_PIN, HIGH);
+        delay(20);
+        digitalWrite(VIBRATION_PIN, LOW);
+      } else if (timeSinceLastTap < 500 && currentState == WAITING_FOR_SECOND_TAP) {
         // DOUBLE TAP!
         currentState = BONKED;
         stateStartTime = millis();
         bonkVibrationPulse = 0;  // Reset pulse counter for vibration pattern
         lastTapTime = 0;
       } else if (currentState == SHOWING_TIME) {
-        // Tap while showing time - show pomodoro selection
+        // Tap while showing time - go to Spotify mode
         vibrate(200);
-        currentState = POMODORO_SELECT;
-        pomodoroSelected = 0;
-        pomodoroSelectionTime = millis();
-        pomodoroTouchHandled = false;
+        currentState = SPOTIFY_MODE;
+        spotifyTapCount = 0;
+        spotifyTapPending = false;
+        spotifyGetCurrentTrack();  // Fetch initial track info
+        lastSpotifyPoll = millis();
         stateStartTime = millis();
         lastTapTime = 0;
       } else if (currentState == POMODORO_SELECT) {
@@ -904,7 +1321,38 @@ void updateState() {
       // Display current time continuously
       displayCurrentTime();
       
-      // Note: Tap to cycle to distance display is handled in handleTouch()
+      // Note: Tap to cycle to Spotify mode is handled in handleTouch()
+      break;
+    
+    case SPOTIFY_MODE:
+      // Display Spotify screen
+      displaySpotify();
+      
+      // Only poll when no taps are pending (API calls block the loop ~1s)
+      if (!spotifyTapPending && (millis() - lastSpotifyPoll >= SPOTIFY_POLL_INTERVAL)) {
+        spotifyGetCurrentTrack();
+        lastSpotifyPoll = millis();
+      }
+      
+      // Resolve pending taps after the tap window expires
+      if (spotifyTapPending && (millis() - spotifyLastTapTime >= SPOTIFY_TAP_WINDOW)) {
+        spotifyTapPending = false;
+        if (spotifyTapCount == 1) {
+          // Single tap = play/pause
+          spotifyPlayPause();
+          vibrate(150);
+        } else if (spotifyTapCount == 2) {
+          // Double tap = next track
+          spotifyNextTrack();
+          vibrate(150);
+        } else if (spotifyTapCount >= 3) {
+          // Triple tap = previous track
+          spotifyPrevTrack();
+          vibrate(150);
+        }
+        spotifyTapCount = 0;
+        lastSpotifyPoll = millis();  // Reset poll timer after action
+      }
       break;
       
     case POMODORO_SELECT: {
