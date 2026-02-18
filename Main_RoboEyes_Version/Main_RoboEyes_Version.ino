@@ -143,10 +143,11 @@ enum State {
   SHOWING_AFFECTION,
   WAITING_FOR_SECOND_TAP,
   SHOWING_TIME,
-  SPOTIFY_MODE,
+  STOPWATCH_MODE,
   POMODORO_SELECT,
   POMODORO_RUNNING,
   POMODORO_DONE,
+  SPOTIFY_MODE,
   SHOWING_DISTANCE,
   SHOWING_TEMPERATURE,
   SHOWING_HUMIDITY,
@@ -167,6 +168,13 @@ unsigned long pomodoroEndTime = 0;       // When the timer should end
 bool pomodoroTouchHandled = false;       // Prevent multiple triggers per long press
 bool pomodoroPaused = false;             // Whether the timer is paused
 unsigned long pomodoroPausedRemaining = 0; // Remaining time when paused (ms)
+
+// ============ STOPWATCH STATE ============
+bool stopwatchRunning = false;
+unsigned long stopwatchStartTime = 0;        // When stopwatch was started/resumed
+unsigned long stopwatchElapsed = 0;           // Accumulated elapsed time in ms
+unsigned long stopwatchLastDoubleTap = 0;     // For double-tap reset detection
+bool stopwatchWaitingSecondTap = false;       // Waiting for potential second tap
 
 // ============ SPOTIFY STATE ============
 String spotifyAccessToken = "";
@@ -229,7 +237,7 @@ void loop() {
   updateState();
   
   // Only update eyes when not showing info displays
-  if (currentState != SHOWING_TIME && currentState != SHOWING_DISTANCE && currentState != SHOWING_TEMPERATURE && currentState != SHOWING_HUMIDITY && currentState != POMODORO_SELECT && currentState != POMODORO_RUNNING && currentState != BREAK_REMINDER && currentState != SPOTIFY_MODE) {
+  if (currentState != SHOWING_TIME && currentState != STOPWATCH_MODE && currentState != SHOWING_DISTANCE && currentState != SHOWING_TEMPERATURE && currentState != SHOWING_HUMIDITY && currentState != POMODORO_SELECT && currentState != POMODORO_RUNNING && currentState != BREAK_REMINDER && currentState != SPOTIFY_MODE) {
     eyes.update();
   }
 }
@@ -456,6 +464,67 @@ void displayCurrentTime() {
   display.setTextSize(1);
   display.setCursor(35, 40);
   display.println(dateStr);
+  
+  display.display();
+}
+
+// ============ STOPWATCH DISPLAY ============
+void displayStopwatch() {
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  
+  // Header - always shows "~ Stopwatch ~"
+  display.setTextSize(1);
+  display.setCursor(25, 2);
+  display.println("~ Stopwatch ~");
+  display.drawLine(0, 11, 128, 11, SSD1306_WHITE);
+  
+  // Calculate current elapsed time
+  unsigned long totalMs = stopwatchElapsed;
+  if (stopwatchRunning) {
+    totalMs += (millis() - stopwatchStartTime);
+  }
+  
+  unsigned long totalSec = totalMs / 1000;
+  unsigned long ms = (totalMs % 1000) / 10;  // Centiseconds
+  unsigned long sec = totalSec % 60;
+  unsigned long mins = (totalSec / 60) % 60;
+  unsigned long hrs = totalSec / 3600;
+  
+  // Large time display (size 3) with centiseconds (size 1) on same line
+  char timeStr[16];
+  if (hrs > 0) {
+    sprintf(timeStr, "%lu:%02lu:%02lu", hrs, mins, sec);
+  } else {
+    sprintf(timeStr, "%02lu:%02lu", mins, sec);
+  }
+  
+  char csStr[6];
+  sprintf(csStr, ".%02lu", ms);
+  
+  // Calculate positions: textSize 3 = 18px/char, textSize 1 = 6px/char
+  int mainWidth = strlen(timeStr) * 18;
+  int csWidth = strlen(csStr) * 6;
+  int totalWidth = mainWidth + csWidth;
+  int startX = (128 - totalWidth) / 2;
+  int mainY = 24;  // Vertically centered below header
+  
+  display.setTextSize(3);
+  display.setCursor(startX, mainY);
+  display.print(timeStr);
+  
+  // Centiseconds at size 1, aligned to bottom of the large text
+  // textSize 3 = 24px tall, textSize 1 = 8px tall, so offset by 16px
+  display.setTextSize(1);
+  display.setCursor(startX + mainWidth, mainY + 16);
+  display.print(csStr);
+  
+  // Show "Paused" at bottom when paused
+  if (!stopwatchRunning && stopwatchElapsed > 0) {
+    display.setTextSize(1);
+    display.setCursor(46, 54);
+    display.println("Paused");
+  }
   
   display.display();
 }
@@ -1067,43 +1136,87 @@ void handleTouch() {
   if (currentTouch) {
     touchDuration = millis() - touchStartTime;
     
-    // Pomodoro select: hold cycles options every 600ms
-    if (currentState == POMODORO_SELECT && !pomodoroTouchHandled) {
-      if (touchDuration >= 600 && !isLongPress) {
-        isLongPress = true;  // First cycle at 600ms
-        pomodoroSelected = (pomodoroSelected + 1) % 5;
-        pomodoroSelectionTime = millis();  // Reset 10s auto-start countdown
-        lastAffectionVibration = millis();  // Reuse as repeat timer
-        vibrate(150);
+    // Pomodoro select: long press exits to Spotify
+    if (currentState == POMODORO_SELECT) {
+      if (touchDuration >= 1200 && !isLongPress) {
+        isLongPress = true;
+        vibrate(200);
+        currentState = SPOTIFY_MODE;
+        spotifyTapCount = 0;
+        spotifyTapPending = false;
+        spotifyGetCurrentTrack();
+        lastSpotifyPoll = millis();
+        stateStartTime = millis();
       }
-      // Keep cycling every 800ms while held
-      if (isLongPress && (millis() - lastAffectionVibration >= 800)) {
-        pomodoroSelected = (pomodoroSelected + 1) % 5;
+    }
+    // Showing time: long press goes to stopwatch
+    else if (currentState == SHOWING_TIME) {
+      if (touchDuration >= 1200 && !isLongPress) {
+        isLongPress = true;
+        vibrate(200);
+        currentState = STOPWATCH_MODE;
+        stopwatchWaitingSecondTap = false;
+        stateStartTime = millis();
+      }
+    }
+    // Stopwatch mode: long press goes to next mode (Pomodoro)
+    else if (currentState == STOPWATCH_MODE) {
+      if (touchDuration >= 1200 && !isLongPress) {
+        isLongPress = true;
+        vibrate(200);
+        currentState = POMODORO_SELECT;
+        pomodoroSelected = 0;
         pomodoroSelectionTime = millis();
-        lastAffectionVibration = millis();
-        vibrate(150);
+        stateStartTime = millis();
       }
     }
     // Spotify mode: long press exits
     else if (currentState == SPOTIFY_MODE) {
-      if (touchDuration >= 2000 && !isLongPress) {
+      if (touchDuration >= 1200 && !isLongPress) {
         isLongPress = true;
         vibrate(200);
         spotifyTapCount = 0;
         spotifyTapPending = false;
-        currentState = POMODORO_SELECT;
-        pomodoroSelected = 0;
-        pomodoroSelectionTime = millis();
-        pomodoroTouchHandled = true;  // Block cycling until finger lifts
+        currentState = SHOWING_DISTANCE;
+        lastDistanceDisplayUpdate = 0;  // Force immediate first render
         stateStartTime = millis();
       }
     }
-    // Pomodoro running: long press exits
+    // Pomodoro running: long press goes back to selection screen
     else if (currentState == POMODORO_RUNNING) {
-      if (touchDuration >= 2000 && !isLongPress) {
+      if (touchDuration >= 1200 && !isLongPress) {
         isLongPress = true;
-        vibratePattern(3, 200, 200);
+        vibrate(200);
         pomodoroPaused = false;
+        currentState = POMODORO_SELECT;
+        pomodoroSelected = 0;
+        pomodoroSelectionTime = millis();
+        stateStartTime = millis();
+      }
+    }
+    // Distance: long press cycles to temperature
+    else if (currentState == SHOWING_DISTANCE) {
+      if (touchDuration >= 1200 && !isLongPress) {
+        isLongPress = true;
+        vibrate(200);
+        currentState = SHOWING_TEMPERATURE;
+        stateStartTime = millis();
+      }
+    }
+    // Temperature: long press cycles to humidity
+    else if (currentState == SHOWING_TEMPERATURE) {
+      if (touchDuration >= 1200 && !isLongPress) {
+        isLongPress = true;
+        vibrate(200);
+        currentState = SHOWING_HUMIDITY;
+        stateStartTime = millis();
+      }
+    }
+    // Humidity: long press exits back to eyes
+    else if (currentState == SHOWING_HUMIDITY) {
+      if (touchDuration >= 1200 && !isLongPress) {
+        isLongPress = true;
+        vibrate(200);
         currentState = IDLE;
         eyes.setMood(DEFAULT);
         eyes.setPosition(DEFAULT);
@@ -1168,20 +1281,25 @@ void handleTouch() {
         stateStartTime = millis();
         bonkVibrationPulse = 0;  // Reset pulse counter for vibration pattern
         lastTapTime = 0;
-      } else if (currentState == SHOWING_TIME) {
-        // Tap while showing time - go to Spotify mode
-        vibrate(200);
-        currentState = SPOTIFY_MODE;
-        spotifyTapCount = 0;
-        spotifyTapPending = false;
-        spotifyGetCurrentTrack();  // Fetch initial track info
-        lastSpotifyPoll = millis();
-        stateStartTime = millis();
+      } else if (currentState == STOPWATCH_MODE) {
+        // Stopwatch: single/double tap handling
+        if (stopwatchWaitingSecondTap && (millis() - stopwatchLastDoubleTap < 500)) {
+          // Double tap = reset
+          stopwatchWaitingSecondTap = false;
+          stopwatchRunning = false;
+          stopwatchElapsed = 0;
+          vibrate(200);
+        } else {
+          // First tap - mark as waiting for potential second tap
+          stopwatchWaitingSecondTap = true;
+          stopwatchLastDoubleTap = millis();
+        }
         lastTapTime = 0;
       } else if (currentState == POMODORO_SELECT) {
-        // Tap while in pomodoro select - move forward to distance
-        vibrate(200);
-        currentState = SHOWING_DISTANCE;
+        // Single tap = cycle through pomodoro options
+        vibrate(150);
+        pomodoroSelected = (pomodoroSelected + 1) % 5;
+        pomodoroSelectionTime = millis();  // Reset 10s auto-start countdown
         lastTapTime = 0;
       } else if (currentState == POMODORO_RUNNING) {
         // Tap while pomodoro running - toggle pause/resume
@@ -1196,22 +1314,8 @@ void handleTouch() {
           pomodoroPaused = true;
         }
         lastTapTime = 0;
-      } else if (currentState == SHOWING_DISTANCE) {
-        // Tap while showing distance - show temperature
-        vibrate(200);  // Medium pulse for screen cycle
-        currentState = SHOWING_TEMPERATURE;
-        lastTapTime = 0;
-      } else if (currentState == SHOWING_TEMPERATURE) {
-        // Tap while showing temperature - show humidity
-        vibrate(200);  // Medium pulse for screen cycle
-        currentState = SHOWING_HUMIDITY;
-        lastTapTime = 0;
-      } else if (currentState == SHOWING_HUMIDITY) {
-        // Tap while showing humidity - go back to eyes
-        vibrate(200);  // Medium pulse for screen cycle
-        currentState = IDLE;
-        eyes.setMood(DEFAULT);
-        eyes.setPosition(DEFAULT);
+      } else if (currentState == SHOWING_TIME || currentState == SHOWING_DISTANCE || currentState == SHOWING_TEMPERATURE || currentState == SHOWING_HUMIDITY) {
+        // These modes use long press to cycle - ignore taps
         lastTapTime = 0;
       } else {
         // First tap - wait for possible second tap
@@ -1321,7 +1425,28 @@ void updateState() {
       // Display current time continuously
       displayCurrentTime();
       
-      // Note: Tap to cycle to Spotify mode is handled in handleTouch()
+      // Note: Tap to cycle to stopwatch is handled in handleTouch()
+      break;
+    
+    case STOPWATCH_MODE:
+      // Display stopwatch
+      displayStopwatch();
+      
+      // Resolve single tap after double-tap window (500ms)
+      if (stopwatchWaitingSecondTap && (millis() - stopwatchLastDoubleTap >= 500)) {
+        stopwatchWaitingSecondTap = false;
+        // Single tap = toggle start/pause
+        if (stopwatchRunning) {
+          // Pause: accumulate elapsed
+          stopwatchElapsed += (millis() - stopwatchStartTime);
+          stopwatchRunning = false;
+        } else {
+          // Start/Resume
+          stopwatchStartTime = millis();
+          stopwatchRunning = true;
+        }
+        vibrate(200);
+      }
       break;
     
     case SPOTIFY_MODE:
@@ -1337,18 +1462,16 @@ void updateState() {
       // Resolve pending taps after the tap window expires
       if (spotifyTapPending && (millis() - spotifyLastTapTime >= SPOTIFY_TAP_WINDOW)) {
         spotifyTapPending = false;
+        vibrate(200);  // Instant feedback before API call
         if (spotifyTapCount == 1) {
           // Single tap = play/pause
           spotifyPlayPause();
-          vibrate(150);
         } else if (spotifyTapCount == 2) {
           // Double tap = next track
           spotifyNextTrack();
-          vibrate(150);
         } else if (spotifyTapCount >= 3) {
           // Triple tap = previous track
           spotifyPrevTrack();
-          vibrate(150);
         }
         spotifyTapCount = 0;
         lastSpotifyPoll = millis();  // Reset poll timer after action
