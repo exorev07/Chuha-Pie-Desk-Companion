@@ -1138,7 +1138,7 @@ void handleTouch() {
     
     // Pomodoro select: long press exits to Spotify
     if (currentState == POMODORO_SELECT) {
-      if (touchDuration >= 1200 && !isLongPress) {
+      if (touchDuration >= 1000 && !isLongPress) {
         isLongPress = true;
         vibrate(200);
         currentState = SPOTIFY_MODE;
@@ -1151,7 +1151,7 @@ void handleTouch() {
     }
     // Showing time: long press goes to stopwatch
     else if (currentState == SHOWING_TIME) {
-      if (touchDuration >= 1200 && !isLongPress) {
+      if (touchDuration >= 1000 && !isLongPress) {
         isLongPress = true;
         vibrate(200);
         currentState = STOPWATCH_MODE;
@@ -1161,7 +1161,7 @@ void handleTouch() {
     }
     // Stopwatch mode: long press goes to next mode (Pomodoro)
     else if (currentState == STOPWATCH_MODE) {
-      if (touchDuration >= 1200 && !isLongPress) {
+      if (touchDuration >= 1000 && !isLongPress) {
         isLongPress = true;
         vibrate(200);
         currentState = POMODORO_SELECT;
@@ -1172,7 +1172,7 @@ void handleTouch() {
     }
     // Spotify mode: long press exits
     else if (currentState == SPOTIFY_MODE) {
-      if (touchDuration >= 1200 && !isLongPress) {
+      if (touchDuration >= 1000 && !isLongPress) {
         isLongPress = true;
         vibrate(200);
         spotifyTapCount = 0;
@@ -1184,7 +1184,7 @@ void handleTouch() {
     }
     // Pomodoro running: long press goes back to selection screen
     else if (currentState == POMODORO_RUNNING) {
-      if (touchDuration >= 1200 && !isLongPress) {
+      if (touchDuration >= 1000 && !isLongPress) {
         isLongPress = true;
         vibrate(200);
         pomodoroPaused = false;
@@ -1196,7 +1196,7 @@ void handleTouch() {
     }
     // Distance: long press cycles to temperature
     else if (currentState == SHOWING_DISTANCE) {
-      if (touchDuration >= 1200 && !isLongPress) {
+      if (touchDuration >= 1000 && !isLongPress) {
         isLongPress = true;
         vibrate(200);
         currentState = SHOWING_TEMPERATURE;
@@ -1205,7 +1205,7 @@ void handleTouch() {
     }
     // Temperature: long press cycles to humidity
     else if (currentState == SHOWING_TEMPERATURE) {
-      if (touchDuration >= 1200 && !isLongPress) {
+      if (touchDuration >= 1000 && !isLongPress) {
         isLongPress = true;
         vibrate(200);
         currentState = SHOWING_HUMIDITY;
@@ -1214,7 +1214,7 @@ void handleTouch() {
     }
     // Humidity: long press exits back to eyes
     else if (currentState == SHOWING_HUMIDITY) {
-      if (touchDuration >= 1200 && !isLongPress) {
+      if (touchDuration >= 1000 && !isLongPress) {
         isLongPress = true;
         vibrate(200);
         currentState = IDLE;
