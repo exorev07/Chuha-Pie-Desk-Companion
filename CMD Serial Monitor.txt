@@ -1,0 +1,4 @@
+Run this in in cmd/terminal
+use ctrl+] to stop!
+
+python -m serial.tools.miniterm COM3 115200
