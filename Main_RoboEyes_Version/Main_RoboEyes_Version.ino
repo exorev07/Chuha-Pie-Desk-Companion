@@ -473,7 +473,7 @@ void displayStopwatch() {
   display.clearDisplay();
   display.setTextColor(SSD1306_WHITE);
   
-  // Header - always shows "~ Stopwatch ~"
+  // Header - "Stopwatch"
   display.setTextSize(1);
   display.setCursor(35, 2);
   display.println("Stopwatch");
