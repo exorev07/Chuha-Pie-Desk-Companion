@@ -62,7 +62,7 @@
 
 // ============ WIFI CREDENTIALS ============
 const char* WIFI_SSID = "M602 2.4Ghz";
-const char* WIFI_PASSWORD = "949079274";
+const char* WIFI_PASSWORD = "9490792745";
 
 // ============ SPOTIFY CREDENTIALS ============
 // Get these from https://developer.spotify.com/dashboard
@@ -110,6 +110,7 @@ unsigned long touchStartTime = 0;
 unsigned long touchDuration = 0;
 unsigned long lastTapTime = 0;
 bool isLongPress = false;
+bool homePressTriggered = false;           // Tracks 3s "home" long press (back to face)
 unsigned long lastAffectionVibration = 0;  // Track vibration timing for affection mode
 int bonkVibrationPulse = 0;                // Track which pulse we're on for bonk pattern
 
@@ -1155,14 +1156,35 @@ void handleTouch() {
   if (currentTouch && !lastTouchState) {
     touchStartTime = millis();
     isLongPress = false;
+    homePressTriggered = false;
   }
   
   // While touching
   if (currentTouch) {
     touchDuration = millis() - touchStartTime;
     
+    // Universal home shortcut: 3s press returns to face from any display mode
+    if (touchDuration >= 3000 && !homePressTriggered &&
+        (currentState == SHOWING_TIME || currentState == STOPWATCH_MODE ||
+         currentState == POMODORO_SELECT || currentState == POMODORO_RUNNING ||
+         currentState == SPOTIFY_MODE || currentState == SHOWING_DISTANCE ||
+         currentState == SHOWING_TEMPERATURE || currentState == SHOWING_HUMIDITY)) {
+      homePressTriggered = true;
+      isLongPress = true;
+      vibratePattern(2, 100, 80);  // Double-pulse to distinguish from mode cycle
+      // Clean up any mode-specific state
+      spotifyTapCount = 0;
+      spotifyTapPending = false;
+      pomodoroPaused = false;
+      stopwatchWaitingSecondTap = false;
+      digitalWrite(VIBRATION_PIN, LOW);
+      currentState = IDLE;
+      eyes.setMood(DEFAULT);
+      eyes.setPosition(DEFAULT);
+      stateStartTime = millis();
+    }
     // Pomodoro select: long press exits to Spotify
-    if (currentState == POMODORO_SELECT) {
+    else if (currentState == POMODORO_SELECT) {
       if (touchDuration >= 1000 && !isLongPress) {
         isLongPress = true;
         vibrate(200);
