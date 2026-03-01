@@ -62,7 +62,7 @@
 
 // ============ WIFI CREDENTIALS ============
 const char* WIFI_SSID = "M602 2.4Ghz";
-const char* WIFI_PASSWORD = "9490792745";
+const char* WIFI_PASSWORD = "949079274";
 
 // ============ SPOTIFY CREDENTIALS ============
 // Get these from https://developer.spotify.com/dashboard
@@ -431,14 +431,28 @@ void connectToWiFi() {
 
 // ============ TIME DISPLAY ============
 void displayCurrentTime() {
-  struct tm timeinfo;
-  if (!getLocalTime(&timeinfo)) {
-    // If time fetch fails, show error
+  // Check WiFi first to avoid blocking getLocalTime call (default 5s timeout)
+  if (WiFi.status() != WL_CONNECTED) {
     display.clearDisplay();
     display.setTextSize(1);
     display.setTextColor(SSD1306_WHITE);
-    display.setCursor(15, 25);
-    display.println("Time unavailable!");
+    display.setCursor(20, 22);
+    display.println("Time & Date N/A");
+    display.setCursor(7, 34);
+    display.println("Wifi not connected!");
+    display.display();
+    return;
+  }
+  
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo, 100)) {  // Short 100ms timeout to avoid blocking loop
+    display.clearDisplay();
+    display.setTextSize(1);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(1, 22);
+    display.println("Time/Date Unavailable");
+    display.setCursor(7, 34);
+    display.println("Wifi not connected!");
     display.display();
     return;
   }
@@ -1017,6 +1031,17 @@ void displaySpotify() {
   display.clearDisplay();
   display.setTextColor(SSD1306_WHITE);
   
+  // Show N/A screen if WiFi not connected
+  if (WiFi.status() != WL_CONNECTED) {
+    display.setTextSize(1);
+    display.setCursor(4, 22);
+    display.println("Spotify control N/A");
+    display.setCursor(7, 34);
+    display.println("Wifi not connected!");
+    display.display();
+    return;
+  }
+  
   // Header
   display.setTextSize(1);
   display.setCursor(40, 2);
@@ -1144,7 +1169,9 @@ void handleTouch() {
         currentState = SPOTIFY_MODE;
         spotifyTapCount = 0;
         spotifyTapPending = false;
-        spotifyGetCurrentTrack();
+        if (WiFi.status() == WL_CONNECTED) {
+          spotifyGetCurrentTrack();
+        }
         lastSpotifyPoll = millis();
         stateStartTime = millis();
       }
@@ -1453,28 +1480,37 @@ void updateState() {
       // Display Spotify screen
       displaySpotify();
       
-      // Only poll when no taps are pending (API calls block the loop ~1s)
-      if (!spotifyTapPending && (millis() - lastSpotifyPoll >= SPOTIFY_POLL_INTERVAL)) {
-        spotifyGetCurrentTrack();
-        lastSpotifyPoll = millis();
-      }
-      
-      // Resolve pending taps after the tap window expires
-      if (spotifyTapPending && (millis() - spotifyLastTapTime >= SPOTIFY_TAP_WINDOW)) {
-        spotifyTapPending = false;
-        vibrate(200);  // Instant feedback before API call
-        if (spotifyTapCount == 1) {
-          // Single tap = play/pause
-          spotifyPlayPause();
-        } else if (spotifyTapCount == 2) {
-          // Double tap = next track
-          spotifyNextTrack();
-        } else if (spotifyTapCount >= 3) {
-          // Triple tap = previous track
-          spotifyPrevTrack();
+      // Only poll/act when WiFi is connected (API calls block the loop)
+      if (WiFi.status() == WL_CONNECTED) {
+        // Only poll when no taps are pending (API calls block the loop ~1s)
+        if (!spotifyTapPending && (millis() - lastSpotifyPoll >= SPOTIFY_POLL_INTERVAL)) {
+          spotifyGetCurrentTrack();
+          lastSpotifyPoll = millis();
         }
-        spotifyTapCount = 0;
-        lastSpotifyPoll = millis();  // Reset poll timer after action
+        
+        // Resolve pending taps after the tap window expires
+        if (spotifyTapPending && (millis() - spotifyLastTapTime >= SPOTIFY_TAP_WINDOW)) {
+          spotifyTapPending = false;
+          vibrate(200);  // Instant feedback before API call
+          if (spotifyTapCount == 1) {
+            // Single tap = play/pause
+            spotifyPlayPause();
+          } else if (spotifyTapCount == 2) {
+            // Double tap = next track
+            spotifyNextTrack();
+          } else if (spotifyTapCount >= 3) {
+            // Triple tap = previous track
+            spotifyPrevTrack();
+          }
+          spotifyTapCount = 0;
+          lastSpotifyPoll = millis();  // Reset poll timer after action
+        }
+      } else {
+        // No WiFi - discard any pending taps silently
+        if (spotifyTapPending) {
+          spotifyTapPending = false;
+          spotifyTapCount = 0;
+        }
       }
       break;
       
