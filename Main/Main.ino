@@ -185,6 +185,7 @@ bool pomodoroPaused = false;             // Whether the timer is paused
 unsigned long pomodoroPausedRemaining = 0; // Remaining time when paused (ms)
 
 // ============ STOPWATCH STATE ============
+bool time24HourFormat = true;                // Toggle between 24hr and 12hr display
 bool stopwatchRunning = false;
 unsigned long stopwatchStartTime = 0;        // When stopwatch was started/resumed
 unsigned long stopwatchElapsed = 0;           // Accumulated elapsed time in ms
@@ -535,9 +536,19 @@ void displayCurrentTime() {
     return;
   }
   
-  // Format time as HH:MM:SS
-  char timeStr[10];
-  strftime(timeStr, sizeof(timeStr), "%H:%M:%S", &timeinfo);
+  // Format time based on 12hr/24hr toggle
+  char timeStr[12];
+  if (time24HourFormat) {
+    strftime(timeStr, sizeof(timeStr), "%H:%M:%S", &timeinfo);
+  } else {
+    strftime(timeStr, sizeof(timeStr), "%I:%M:%S", &timeinfo);
+  }
+  
+  // AM/PM indicator for 12hr mode
+  char ampm[3] = "";
+  if (!time24HourFormat) {
+    strftime(ampm, sizeof(ampm), "%p", &timeinfo);
+  }
   
   // Format date as DD-MM-YYYY
   char dateStr[15];
@@ -549,8 +560,15 @@ void displayCurrentTime() {
   
   // Large time display
   display.setTextSize(2);
-  display.setCursor(17, 15);
-  display.println(timeStr);
+  if (time24HourFormat) {
+    display.setCursor(17, 15);
+    display.println(timeStr);
+  } else {
+    display.setCursor(10, 15);
+    display.print(timeStr);
+    display.setTextSize(1);
+    display.print(ampm);
+  }
   
   // Date below
   display.setTextSize(1);
@@ -1473,7 +1491,12 @@ void handleTouch() {
           pomodoroPaused = true;
         }
         lastTapTime = 0;
-      } else if (currentState == SHOWING_TIME || currentState == SHOWING_DISTANCE || currentState == SHOWING_TEMPERATURE || currentState == SHOWING_HUMIDITY) {
+      } else if (currentState == SHOWING_TIME) {
+        // Tap in time mode: toggle 12hr/24hr format
+        time24HourFormat = !time24HourFormat;
+        vibrate(150);
+        lastTapTime = 0;
+      } else if (currentState == SHOWING_DISTANCE || currentState == SHOWING_TEMPERATURE || currentState == SHOWING_HUMIDITY) {
         // These modes use long press to cycle - ignore taps
         lastTapTime = 0;
       } else {
