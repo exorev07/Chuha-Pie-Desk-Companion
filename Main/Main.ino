@@ -1099,8 +1099,8 @@ void spotifyGetCurrentTrack() {
             spotifyTrackName = jsonUnescape(response.substring(quoteStart + 1, quoteEnd));
             Serial.print("[Spotify] Track: ");
             Serial.println(spotifyTrackName);
-            if (spotifyTrackName.length() > 21) {
-              spotifyTrackName = spotifyTrackName.substring(0, 19) + "..";
+            if (spotifyTrackName.length() > 20) {
+              spotifyTrackName = spotifyTrackName.substring(0, 18) + "..";
             }
           }
         }
@@ -1130,8 +1130,8 @@ void spotifyGetCurrentTrack() {
               spotifyArtistName = jsonUnescape(response.substring(artQuoteStart + 1, artQuoteEnd));
               Serial.print("[Spotify] Artist: ");
               Serial.println(spotifyArtistName);
-              if (spotifyArtistName.length() > 21) {
-                spotifyArtistName = spotifyArtistName.substring(0, 19) + "..";
+              if (spotifyArtistName.length() > 20) {
+                spotifyArtistName = spotifyArtistName.substring(0, 18) + "..";
               }
             }
           }
@@ -1202,15 +1202,15 @@ void displaySpotify() {
   display.setTextSize(1);
   display.setCursor(4, 16);
   if (spotifyTrackName.length() > 0) {
-    display.println(spotifyTrackName);
+    display.print(spotifyTrackName);
   } else {
-    display.println("Loading...");
+    display.print("Loading...");
   }
   
   // Artist name
   display.setCursor(4, 28);
   display.setTextColor(SSD1306_WHITE);
-  display.println(spotifyArtistName);
+  display.print(spotifyArtistName);
   
   // Play/Pause icon (small, left side)
   display.drawLine(0, 39, 128, 39, SSD1306_WHITE);
