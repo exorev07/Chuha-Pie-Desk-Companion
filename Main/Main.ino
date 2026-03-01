@@ -174,6 +174,7 @@ enum State {
   LONG_PRESS_BUILDING,
   SHOWING_AFFECTION,
   WAITING_FOR_SECOND_TAP,
+  WAITING_FOR_THIRD_TAP,
   SHOWING_TIME,
   STOPWATCH_MODE,
   POMODORO_SELECT,
@@ -183,6 +184,7 @@ enum State {
   SHOWING_DISTANCE,
   SHOWING_TEMPERATURE,
   SHOWING_HUMIDITY,
+  BRIGHTNESS_ADJUST,
   BONKED,
   RECOVERING,
   BREAK_REMINDER,
@@ -193,6 +195,14 @@ enum State {
 State currentState = IDLE;
 State previousState = IDLE;            // For returning after alerts (break/posture)
 unsigned long stateStartTime = 0;
+
+// ============ BRIGHTNESS CONFIG ============
+const int brightnessOptions[] = {5, 25, 50, 75, 100};  // Percentage values
+// Each level: {contrast, precharge, vcomh} - all three registers for wide range
+const byte brightnessContrast[] =  {  5,  30, 100, 170, 255};
+const byte brightnessPrecharge[] = {0x00, 0x11, 0x22, 0xF1, 0xF1}; // Phase1|Phase2
+const byte brightnessVCOMH[] =     {0x00, 0x10, 0x20, 0x30, 0x40}; // VCOMH deselect level
+int brightnessSelected = 2;  // Default: 50% (index 2)
 
 // ============ POMODORO CONFIG ============
 const int pomodoroOptions[] = {30, 45, 60, 90, 120};  // Minutes
@@ -229,6 +239,17 @@ unsigned long spotifyLastTapTime = 0;        // When last tap happened in Spotif
 bool spotifyTapPending = false;              // Whether we're waiting for more taps
 
 // ============ SETUP ============
+
+// Helper to apply brightness registers from brightnessSelected index
+void applyBrightness() {
+  display.ssd1306_command(SSD1306_SETCONTRAST);
+  display.ssd1306_command(brightnessContrast[brightnessSelected]);
+  display.ssd1306_command(SSD1306_SETPRECHARGE);
+  display.ssd1306_command(brightnessPrecharge[brightnessSelected]);
+  display.ssd1306_command(SSD1306_SETVCOMDETECT);
+  display.ssd1306_command(brightnessVCOMH[brightnessSelected]);
+}
+
 void setup() {
   Serial.begin(115200);
   
@@ -273,7 +294,7 @@ void loop() {
   updateState();
   
   // Only update eyes when not showing info displays
-  if (currentState != SHOWING_TIME && currentState != STOPWATCH_MODE && currentState != SHOWING_DISTANCE && currentState != SHOWING_TEMPERATURE && currentState != SHOWING_HUMIDITY && currentState != POMODORO_SELECT && currentState != POMODORO_RUNNING && currentState != BREAK_REMINDER && currentState != SPOTIFY_MODE && currentState != POSTURE_ALERT && currentState != WATER_REMINDER) {
+  if (currentState != SHOWING_TIME && currentState != STOPWATCH_MODE && currentState != SHOWING_DISTANCE && currentState != SHOWING_TEMPERATURE && currentState != SHOWING_HUMIDITY && currentState != POMODORO_SELECT && currentState != POMODORO_RUNNING && currentState != BREAK_REMINDER && currentState != SPOTIFY_MODE && currentState != POSTURE_ALERT && currentState != WATER_REMINDER && currentState != BRIGHTNESS_ADJUST) {
     eyes.update();
   }
 }
@@ -552,6 +573,22 @@ void connectToWiFi() {
     display.println("Time synced!");
     display.display();
     delay(1000);
+    
+    // Set brightness based on time of day
+    struct tm timeinfo;
+    if (getLocalTime(&timeinfo, 5000)) {  // 5s timeout OK during setup
+      int hour = timeinfo.tm_hour;
+      if (hour >= 7 && hour < 19) {
+        // 7 AM to 7 PM: 100% brightness
+        brightnessSelected = 4;  // index 4 = 100%
+      } else {
+        // 7 PM to 7 AM: 50% brightness
+        brightnessSelected = 2;  // index 2 = 50%
+      }
+    } else {
+      brightnessSelected = 3;  // Fallback: 75% if time read fails
+    }
+    applyBrightness();
   } else {
     display.setCursor(0, 10);
     display.println("WiFi Failed!");
@@ -559,6 +596,10 @@ void connectToWiFi() {
     display.println("Check credentials");
     display.display();
     delay(3000);
+    
+    // No WiFi: default to 75% brightness
+    brightnessSelected = 3;  // index 3 = 75%
+    applyBrightness();
   }
   
   display.clearDisplay();
@@ -791,6 +832,53 @@ void displayHumidity() {
   display.print(humidity, 0);
   display.setTextSize(2);
   display.println("%");
+  
+  display.display();
+}
+
+// ============ BRIGHTNESS DISPLAY ============
+void displayBrightness() {
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  
+  // Header (Spotify style)
+  display.setTextSize(1);
+  display.setCursor(28, 2);
+  display.print("Brightness");
+  display.drawLine(4, 11, 123, 11, SSD1306_WHITE);
+  
+  // Options in horizontal row: 5, 25, 50, 75, 100
+  // Each option area: ~24px wide, 5 options = 120px, starting at x=4
+  int optionWidth = 24;
+  int startX = 4;
+  int optionY = 24;
+  
+  display.setTextSize(1);
+  for (int i = 0; i < 5; i++) {
+    int x = startX + (i * optionWidth);
+    
+    if (i == brightnessSelected) {
+      // Draw thin border around selected option
+      display.drawRect(x, optionY - 2, optionWidth, 14, SSD1306_WHITE);
+    }
+    
+    // Center the number text within each option area
+    char label[5];
+    sprintf(label, "%d", brightnessOptions[i]);
+    int labelWidth = strlen(label) * 6;  // 6px per char at textSize 1
+    int textX = x + (optionWidth - labelWidth) / 2;
+    display.setCursor(textX, optionY + 1);
+    display.print(label);
+  }
+  
+  // Percentage sign after the row
+  display.setCursor(100, optionY + 16);
+  display.print("%");
+  
+  // Progress bar at bottom (matching Spotify style)
+  int barWidth = map(brightnessOptions[brightnessSelected], 0, 100, 0, 116);
+  display.drawRect(4, 55, 120, 7, SSD1306_WHITE);
+  if (barWidth > 0) display.fillRect(6, 57, barWidth, 3, SSD1306_WHITE);
   
   display.display();
 }
@@ -1467,8 +1555,19 @@ void handleTouch() {
         stateStartTime = millis();
       }
     }
-    // Humidity: long press exits back to eyes
+    // Humidity: long press cycles back to eyes
     else if (currentState == SHOWING_HUMIDITY) {
+      if (touchDuration >= 1000 && !isLongPress) {
+        isLongPress = true;
+        vibrate(200);
+        currentState = IDLE;
+        eyes.setMood(DEFAULT);
+        eyes.setPosition(DEFAULT);
+        stateStartTime = millis();
+      }
+    }
+    // Brightness adjust: long press exits back to eyes
+    else if (currentState == BRIGHTNESS_ADJUST) {
       if (touchDuration >= 1000 && !isLongPress) {
         isLongPress = true;
         vibrate(200);
@@ -1531,10 +1630,15 @@ void handleTouch() {
         delay(20);
         digitalWrite(VIBRATION_PIN, LOW);
       } else if (timeSinceLastTap < 500 && currentState == WAITING_FOR_SECOND_TAP) {
-        // DOUBLE TAP!
-        currentState = BONKED;
+        // DOUBLE TAP - wait for potential triple
+        currentState = WAITING_FOR_THIRD_TAP;
         stateStartTime = millis();
-        bonkVibrationPulse = 0;  // Reset pulse counter for vibration pattern
+        lastTapTime = millis();
+      } else if (timeSinceLastTap < 500 && currentState == WAITING_FOR_THIRD_TAP) {
+        // TRIPLE TAP - open brightness adjust!
+        vibrate(200);
+        currentState = BRIGHTNESS_ADJUST;
+        stateStartTime = millis();
         lastTapTime = 0;
       } else if (currentState == STOPWATCH_MODE) {
         // Stopwatch: single/double tap handling
@@ -1576,6 +1680,12 @@ void handleTouch() {
         lastTapTime = 0;
       } else if (currentState == SHOWING_DISTANCE || currentState == SHOWING_TEMPERATURE || currentState == SHOWING_HUMIDITY) {
         // These modes use long press to cycle - ignore taps
+        lastTapTime = 0;
+      } else if (currentState == BRIGHTNESS_ADJUST) {
+        // Tap cycles through brightness options
+        vibrate(150);
+        brightnessSelected = (brightnessSelected + 1) % 5;
+        applyBrightness();
         lastTapTime = 0;
       } else {
         // First tap - wait for possible second tap
@@ -1698,6 +1808,16 @@ void updateState() {
         vibrate(200);  // Single tap confirmed feedback - consistent 200ms
         currentState = SHOWING_TIME;
         stateStartTime = millis();
+      }
+      break;
+      
+    case WAITING_FOR_THIRD_TAP:
+      // Wait for potential third tap (double tap detected)
+      if (stateTime > 500) {
+        // Timeout - it was a double tap, bonk!
+        currentState = BONKED;
+        stateStartTime = millis();
+        bonkVibrationPulse = 0;
       }
       break;
       
@@ -1842,6 +1962,13 @@ void updateState() {
       displayHumidity();
       
       // Note: Tap to exit is handled in handleTouch()
+      break;
+      
+    case BRIGHTNESS_ADJUST:
+      // Display brightness adjustment screen
+      displayBrightness();
+      
+      // Note: Tap to cycle brightness is handled in handleTouch()
       break;
       
     case BONKED: {
