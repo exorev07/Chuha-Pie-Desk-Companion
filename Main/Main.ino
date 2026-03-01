@@ -185,7 +185,7 @@ bool pomodoroPaused = false;             // Whether the timer is paused
 unsigned long pomodoroPausedRemaining = 0; // Remaining time when paused (ms)
 
 // ============ STOPWATCH STATE ============
-bool time24HourFormat = true;                // Toggle between 24hr and 12hr display
+bool time24HourFormat = false;               // Toggle between 24hr and 12hr display
 bool stopwatchRunning = false;
 unsigned long stopwatchStartTime = 0;        // When stopwatch was started/resumed
 unsigned long stopwatchElapsed = 0;           // Accumulated elapsed time in ms
@@ -1287,7 +1287,7 @@ void handleTouch() {
     touchDuration = millis() - touchStartTime;
     
     // Universal home shortcut: 3s press returns to face from any display mode
-    if (touchDuration >= 3000 && !homePressTriggered &&
+    if (touchDuration >= 4000 && !homePressTriggered &&
         (currentState == SHOWING_TIME || currentState == STOPWATCH_MODE ||
          currentState == POMODORO_SELECT || currentState == POMODORO_RUNNING ||
          currentState == SPOTIFY_MODE || currentState == SHOWING_DISTANCE ||
