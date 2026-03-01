@@ -91,6 +91,16 @@ const int DAYLIGHT_OFFSET_SEC = 0;   // India doesn't use daylight saving
 #define DHT_TYPE DHT11
 DHT dht(DHT_PIN, DHT_TYPE);
 
+// ============ TEMPERATURE MONITORING ============
+#define TEMP_CHECK_INTERVAL 10000   // Check temperature every 10 seconds
+#define SWEAT_THRESHOLD 35.0        // Sweating animation above 35°C
+#define SWEAT_INTERVAL 300000UL     // Sweat every 5 minutes
+#define SWEAT_DURATION 10000        // Sweat for 10 seconds
+unsigned long lastTempCheck = 0;
+unsigned long lastSweatStart = 0;    // When last sweat episode started
+float lastTemperature = 0;
+bool isSweating = false;
+
 // ============ DISTANCE SENSOR CONFIG ============
 #define DETECTION_DISTANCE 50  // Distance in cm to detect presence (adjust as needed)
 #define DISTANCE_CHECK_INTERVAL 500  // Check distance every 500ms
@@ -1587,11 +1597,37 @@ void updateState() {
   
   switch(currentState) {
     case IDLE:
+      // Periodic temperature check for sweat animation (both present and absent)
+      if (millis() - lastTempCheck >= TEMP_CHECK_INTERVAL) {
+        lastTempCheck = millis();
+        float temp = dht.readTemperature();
+        if (!isnan(temp)) {
+          lastTemperature = temp;
+        }
+      }
+      
+      // Sweat logic: above threshold, sweat for 10s every 5 minutes
+      if (lastTemperature > SWEAT_THRESHOLD) {
+        if (!isSweating && (millis() - lastSweatStart >= SWEAT_INTERVAL)) {
+          eyes.setSweat(true);
+          isSweating = true;
+          lastSweatStart = millis();
+        }
+        if (isSweating && (millis() - lastSweatStart >= SWEAT_DURATION)) {
+          eyes.setSweat(false);
+          isSweating = false;
+        }
+      } else if (isSweating) {
+        eyes.setSweat(false);
+        isSweating = false;
+      }
+      
       // Handle presence-based behavior
       if (!personPresent) {
         // Nobody detected - show tired
         eyes.setMood(TIRED);
       } else {
+        
         // Someone present - check greeting sequence
         if (greetingState == GREETING_CURIOUS) {
           eyes.setMood(DEFAULT);
@@ -1613,6 +1649,8 @@ void updateState() {
     case LONG_PRESS_BUILDING:
       // Show happy for 1 second during buildup
       eyes.setMood(HAPPY);
+      eyes.setSweat(false);
+      isSweating = false;
       
       // Return to idle if touch released
       if (!digitalRead(TOUCH_PIN)) {
