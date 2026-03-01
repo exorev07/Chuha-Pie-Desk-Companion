@@ -856,9 +856,16 @@ bool spotifyApiCall(const char* method, const char* endpoint, String* responseOu
 
 void spotifyPlayPause() {
   if (spotifyIsPlaying) {
+    // Snapshot interpolated progress before pausing so display doesn't jump back
+    if (spotifyLastProgressUpdate > 0) {
+      spotifyProgressMs += (millis() - spotifyLastProgressUpdate);
+      if (spotifyProgressMs > spotifyDurationMs) spotifyProgressMs = spotifyDurationMs;
+      spotifyLastProgressUpdate = millis();
+    }
     spotifyApiCall("PUT", "/pause");
   } else {
     spotifyApiCall("PUT", "/play");
+    spotifyLastProgressUpdate = millis();  // Resume interpolation from current value
   }
   spotifyIsPlaying = !spotifyIsPlaying;
 }
@@ -1225,10 +1232,15 @@ void handleTouch() {
         currentState = SPOTIFY_MODE;
         spotifyTapCount = 0;
         spotifyTapPending = false;
-        if (WiFi.status() == WL_CONNECTED) {
-          spotifyGetCurrentTrack();
-        }
-        lastSpotifyPoll = millis();
+        // Clear stale data so display shows "Loading..." immediately
+        spotifyTrackName = "";
+        spotifyArtistName = "";
+        spotifyProgressMs = 0;
+        spotifyDurationMs = 0;
+        spotifyLastProgressUpdate = 0;
+        // Don't call spotifyGetCurrentTrack() here — it blocks ~1-2s
+        // Let the normal poll cycle fetch data (fires within SPOTIFY_POLL_INTERVAL)
+        lastSpotifyPoll = 0;  // Force immediate poll on next loop iteration
         stateStartTime = millis();
       }
     }
