@@ -1196,7 +1196,7 @@ void displaySpotify() {
   display.setTextSize(1);
   display.setCursor(40, 2);
   display.println("Spotify");
-  display.drawLine(0, 11, 128, 11, SSD1306_WHITE);
+  display.drawLine(4, 11, 123, 11, SSD1306_WHITE);
   
   // Track name
   display.setTextSize(1);
@@ -1213,7 +1213,7 @@ void displaySpotify() {
   display.print(spotifyArtistName);
   
   // Play/Pause icon (small, left side)
-  display.drawLine(0, 39, 128, 39, SSD1306_WHITE);
+  display.drawLine(4, 39, 123, 39, SSD1306_WHITE);
   if (spotifyIsPlaying) {
     // Pause icon (two small bars)
     display.fillRect(4, 42, 3, 8, SSD1306_WHITE);
