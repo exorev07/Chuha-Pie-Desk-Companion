@@ -94,6 +94,9 @@ DHT dht(DHT_PIN, DHT_TYPE);
 // ============ DISTANCE SENSOR CONFIG ============
 #define DETECTION_DISTANCE 50  // Distance in cm to detect presence (adjust as needed)
 #define DISTANCE_CHECK_INTERVAL 500  // Check distance every 500ms
+float smoothedDistance = 0;           // EMA-smoothed distance for display
+bool smoothedDistanceInit = false;    // Whether EMA has been seeded
+#define EMA_ALPHA 0.3                 // EMA weight (0.1=very smooth, 0.5=responsive)
 
 // ============ DISPLAY SETUP ============
 #define SCREEN_WIDTH  128
@@ -303,23 +306,54 @@ void wakeUpEyes() {
 }
 
 // ============ DISTANCE MEASUREMENT ============
-float getDistance() {
-  // Clear the trigger
+// Single raw reading from HC-SR04
+float getDistanceRaw() {
   digitalWrite(TRIG_PIN, LOW);
   delayMicroseconds(2);
   
-  // Send 10 microsecond pulse
   digitalWrite(TRIG_PIN, HIGH);
   delayMicroseconds(10);
   digitalWrite(TRIG_PIN, LOW);
   
-  // Read the echo
   long duration = pulseIn(ECHO_PIN, HIGH, 30000); // 30ms timeout
-  
-  // Calculate distance in cm with decimal precision
   float distance = duration * 0.034 / 2;
-  
   return distance;
+}
+
+// Smoothed reading: median of 5 rapid samples -> EMA filter
+// Median rejects outlier spikes, EMA smooths valid jitter
+float getDistance() {
+  // Take 5 rapid readings
+  float samples[5];
+  for (int i = 0; i < 5; i++) {
+    samples[i] = getDistanceRaw();
+    if (i < 4) delayMicroseconds(500);  // Brief pause between pings
+  }
+  
+  // Sort for median (simple insertion sort on 5 elements)
+  for (int i = 1; i < 5; i++) {
+    float key = samples[i];
+    int j = i - 1;
+    while (j >= 0 && samples[j] > key) {
+      samples[j + 1] = samples[j];
+      j--;
+    }
+    samples[j + 1] = key;
+  }
+  float median = samples[2];  // Middle value
+  
+  // Apply EMA (exponential moving average)
+  if (!smoothedDistanceInit || median <= 0 || median >= 400) {
+    // Seed EMA on first valid reading, or pass through invalid
+    if (median > 0 && median < 400) {
+      smoothedDistance = median;
+      smoothedDistanceInit = true;
+    }
+    return median;
+  }
+  
+  smoothedDistance = EMA_ALPHA * median + (1.0 - EMA_ALPHA) * smoothedDistance;
+  return smoothedDistance;
 }
 
 // ============ PRESENCE DETECTION ============
@@ -333,7 +367,7 @@ void checkPresence() {
   float distance = getDistance();
   wasPersonPresent = personPresent;
   
-  // Get raw sensor reading
+  // Use raw single reading for presence (has its own debounce logic)
   bool currentlyDetected = (distance > 0 && distance < DETECTION_DISTANCE);
   
   // Track when raw detection state changed
