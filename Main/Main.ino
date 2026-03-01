@@ -149,6 +149,15 @@ unsigned long tooCloseStartTime = 0;       // When too-close was first detected
 unsigned long lastPostureAlert = 0;        // When last posture alert was shown
 bool postureAlertActive = false;           // Alert already fired for this episode
 
+// ============ WATER REMINDER ============
+#define WATER_REMINDER_INTERVAL 3600000UL  // Remind every 1 hour
+#define WATER_RETURN_DELAY 60000UL         // 1 min after returning from long absence
+#define LONG_ABSENCE_THRESHOLD 1800000UL   // 30 min counts as "long absence"
+unsigned long lastWaterReminder = 0;        // When last water reminder was shown
+unsigned long lastPresenceEnd = 0;          // When person last left (for absence tracking)
+bool waterReturnReminderPending = false;    // Waiting to show return reminder
+unsigned long waterReturnDetectTime = 0;    // When person returned after long absence
+
 // ============ ANIMATION STATE ============
 enum State {
   IDLE,
@@ -167,7 +176,8 @@ enum State {
   BONKED,
   RECOVERING,
   BREAK_REMINDER,
-  POSTURE_ALERT
+  POSTURE_ALERT,
+  WATER_REMINDER
 };
 
 State currentState = IDLE;
@@ -253,7 +263,7 @@ void loop() {
   updateState();
   
   // Only update eyes when not showing info displays
-  if (currentState != SHOWING_TIME && currentState != STOPWATCH_MODE && currentState != SHOWING_DISTANCE && currentState != SHOWING_TEMPERATURE && currentState != SHOWING_HUMIDITY && currentState != POMODORO_SELECT && currentState != POMODORO_RUNNING && currentState != BREAK_REMINDER && currentState != SPOTIFY_MODE && currentState != POSTURE_ALERT) {
+  if (currentState != SHOWING_TIME && currentState != STOPWATCH_MODE && currentState != SHOWING_DISTANCE && currentState != SHOWING_TEMPERATURE && currentState != SHOWING_HUMIDITY && currentState != POMODORO_SELECT && currentState != POMODORO_RUNNING && currentState != BREAK_REMINDER && currentState != SPOTIFY_MODE && currentState != POSTURE_ALERT && currentState != WATER_REMINDER) {
     eyes.update();
   }
 }
@@ -412,6 +422,8 @@ void checkPresence() {
     // Person left - reset greeting and break timer
     greetingState = NO_GREETING;
     breakReminderShown = false;
+    lastPresenceEnd = millis();  // Track when they left for water reminder
+    waterReturnReminderPending = false;
   }
   
   // --- Posture alert: too close detection (any mode) ---
@@ -444,6 +456,41 @@ void checkPresence() {
     previousState = currentState;
     currentState = BREAK_REMINDER;
     stateStartTime = millis();
+  }
+  
+  // --- Water reminder: hourly + 1min after return from long absence ---
+  bool canShowWater = (currentState != WATER_REMINDER && currentState != BREAK_REMINDER && currentState != POSTURE_ALERT);
+  
+  // Trigger 1: Person returned after long absence (>30min) — remind after 1min
+  if (personPresent && !wasPersonPresent && lastPresenceEnd > 0) {
+    unsigned long absenceDuration = millis() - lastPresenceEnd;
+    if (absenceDuration >= LONG_ABSENCE_THRESHOLD) {
+      waterReturnReminderPending = true;
+      waterReturnDetectTime = millis();
+    }
+  }
+  
+  if (waterReturnReminderPending && personPresent && canShowWater &&
+      (millis() - waterReturnDetectTime >= WATER_RETURN_DELAY)) {
+    waterReturnReminderPending = false;
+    lastWaterReminder = millis();
+    previousState = currentState;
+    currentState = WATER_REMINDER;
+    stateStartTime = millis();
+  }
+  
+  // Trigger 2: Hourly reminder while present
+  if (personPresent && canShowWater && lastWaterReminder > 0 &&
+      (millis() - lastWaterReminder >= WATER_REMINDER_INTERVAL)) {
+    lastWaterReminder = millis();
+    previousState = currentState;
+    currentState = WATER_REMINDER;
+    stateStartTime = millis();
+  }
+  
+  // Seed the first water reminder timestamp on first presence
+  if (personPresent && lastWaterReminder == 0) {
+    lastWaterReminder = millis();
   }
   
   // Update greeting sequence
@@ -1271,6 +1318,27 @@ void displayPostureAlert() {
   display.display();
 }
 
+// ============ WATER REMINDER DISPLAY ============
+void displayWaterReminder() {
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  
+  // Draw border
+  display.drawRect(0, 0, 128, 64, SSD1306_WHITE);
+  display.drawRect(1, 1, 126, 62, SSD1306_WHITE);
+  
+  // Main message centered
+  display.setTextSize(1);
+  display.setCursor(16, 18);
+  display.println("Drink some water,");
+  display.setCursor(14, 30);
+  display.println("Miss Sondhi! :)");
+  display.setCursor(22, 46);
+  display.println("Stay hydrated <3");
+  
+  display.display();
+}
+
 // ============ TOUCH HANDLING ============
 void handleTouch() {
   bool currentTouch = digitalRead(TOUCH_PIN);
@@ -1826,6 +1894,30 @@ void updateState() {
       // Vibration: rapid pulses for first 2 seconds
       if (stateTime < 2000) {
         unsigned long pulsePos = stateTime % 250;  // 150ms on + 100ms off
+        if (pulsePos < 150) {
+          digitalWrite(VIBRATION_PIN, HIGH);
+        } else {
+          digitalWrite(VIBRATION_PIN, LOW);
+        }
+      } else {
+        digitalWrite(VIBRATION_PIN, LOW);
+      }
+      
+      // After 5 seconds, return to previous mode
+      if (stateTime >= 5000) {
+        digitalWrite(VIBRATION_PIN, LOW);
+        currentState = previousState;
+        stateStartTime = millis();
+      }
+      break;
+    
+    case WATER_REMINDER:
+      // Show water reminder
+      displayWaterReminder();
+      
+      // Gentle vibration: 150ms on, 150ms off for first 2 seconds
+      if (stateTime < 2000) {
+        unsigned long pulsePos = stateTime % 300;
         if (pulsePos < 150) {
           digitalWrite(VIBRATION_PIN, HIGH);
         } else {
