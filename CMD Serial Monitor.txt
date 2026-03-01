@@ -1,4 +1,5 @@
-Run this in in cmd/terminal
-use ctrl+] to stop!
+To get the Serial output from ESP32 - Run this in in cmd/terminal:
 
 python -m serial.tools.miniterm COM3 115200
+
+use ctrl+] to stop!
