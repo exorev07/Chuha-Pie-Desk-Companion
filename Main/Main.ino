@@ -140,6 +140,15 @@ unsigned long continuousPresenceStart = 0;   // When person was first detected
 bool breakReminderShown = false;             // Prevent repeated reminders
 #define BREAK_REMINDER_INTERVAL 3600000UL    // 1 hour in ms
 
+// ============ POSTURE ALERT ============
+#define POSTURE_DISTANCE 30               // Too close if under 30cm
+#define POSTURE_SUSTAIN_TIME 3000         // Must stay too close for 3s before alert
+#define POSTURE_COOLDOWN 60000UL          // Don't re-alert within 1 minute
+bool tooCloseDetected = false;             // Raw: currently under threshold
+unsigned long tooCloseStartTime = 0;       // When too-close was first detected
+unsigned long lastPostureAlert = 0;        // When last posture alert was shown
+bool postureAlertActive = false;           // Alert already fired for this episode
+
 // ============ ANIMATION STATE ============
 enum State {
   IDLE,
@@ -157,10 +166,12 @@ enum State {
   SHOWING_HUMIDITY,
   BONKED,
   RECOVERING,
-  BREAK_REMINDER
+  BREAK_REMINDER,
+  POSTURE_ALERT
 };
 
 State currentState = IDLE;
+State previousState = IDLE;            // For returning after alerts (break/posture)
 unsigned long stateStartTime = 0;
 
 // ============ POMODORO CONFIG ============
@@ -241,7 +252,7 @@ void loop() {
   updateState();
   
   // Only update eyes when not showing info displays
-  if (currentState != SHOWING_TIME && currentState != STOPWATCH_MODE && currentState != SHOWING_DISTANCE && currentState != SHOWING_TEMPERATURE && currentState != SHOWING_HUMIDITY && currentState != POMODORO_SELECT && currentState != POMODORO_RUNNING && currentState != BREAK_REMINDER && currentState != SPOTIFY_MODE) {
+  if (currentState != SHOWING_TIME && currentState != STOPWATCH_MODE && currentState != SHOWING_DISTANCE && currentState != SHOWING_TEMPERATURE && currentState != SHOWING_HUMIDITY && currentState != POMODORO_SELECT && currentState != POMODORO_RUNNING && currentState != BREAK_REMINDER && currentState != SPOTIFY_MODE && currentState != POSTURE_ALERT) {
     eyes.update();
   }
 }
@@ -400,6 +411,38 @@ void checkPresence() {
     // Person left - reset greeting and break timer
     greetingState = NO_GREETING;
     breakReminderShown = false;
+  }
+  
+  // --- Posture alert: too close detection (any mode) ---
+  bool currentlyTooClose = (distance > 0 && distance < POSTURE_DISTANCE);
+  if (currentlyTooClose && !tooCloseDetected) {
+    tooCloseDetected = true;
+    tooCloseStartTime = millis();
+  } else if (!currentlyTooClose) {
+    tooCloseDetected = false;
+    postureAlertActive = false;  // Reset so next episode can trigger
+  }
+  
+  // Fire posture alert if sustained too close for 3s (with cooldown)
+  if (tooCloseDetected && !postureAlertActive &&
+      (millis() - tooCloseStartTime >= POSTURE_SUSTAIN_TIME) &&
+      (millis() - lastPostureAlert >= POSTURE_COOLDOWN) &&
+      currentState != POSTURE_ALERT && currentState != BREAK_REMINDER) {
+    postureAlertActive = true;
+    lastPostureAlert = millis();
+    previousState = currentState;
+    currentState = POSTURE_ALERT;
+    stateStartTime = millis();
+  }
+  
+  // --- Break reminder: 1 hour continuous presence (any mode) ---
+  if (personPresent && !breakReminderShown &&
+      (millis() - continuousPresenceStart >= BREAK_REMINDER_INTERVAL) &&
+      currentState != BREAK_REMINDER && currentState != POSTURE_ALERT) {
+    breakReminderShown = true;
+    previousState = currentState;
+    currentState = BREAK_REMINDER;
+    stateStartTime = millis();
   }
   
   // Update greeting sequence
@@ -1189,6 +1232,27 @@ void displayBreakReminder() {
   display.display();
 }
 
+// ============ POSTURE ALERT DISPLAY ============
+void displayPostureAlert() {
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  
+  // Draw border
+  display.drawRect(0, 0, 128, 64, SSD1306_WHITE);
+  display.drawRect(1, 1, 126, 62, SSD1306_WHITE);
+  
+  // Main message centered
+  display.setTextSize(1);
+  display.setCursor(16, 18);
+  display.println("Too close! :(");
+  display.setCursor(10, 30);
+  display.println("Please sit back a");
+  display.setCursor(7, 42);
+  display.println("little Miss Sondhi!");
+  
+  display.display();
+}
+
 // ============ TOUCH HANDLING ============
 void handleTouch() {
   bool currentTouch = digitalRead(TOUCH_PIN);
@@ -1437,14 +1501,6 @@ void updateState() {
         // Nobody detected - show tired
         eyes.setMood(TIRED);
       } else {
-        // Check for break reminder (1 hour of continuous presence)
-        if (!breakReminderShown && (millis() - continuousPresenceStart >= BREAK_REMINDER_INTERVAL)) {
-          breakReminderShown = true;
-          currentState = BREAK_REMINDER;
-          stateStartTime = millis();
-          break;
-        }
-        
         // Someone present - check greeting sequence
         if (greetingState == GREETING_CURIOUS) {
           eyes.setMood(DEFAULT);
@@ -1732,10 +1788,34 @@ void updateState() {
         digitalWrite(VIBRATION_PIN, LOW);
       }
       
-      // After 5 seconds, return to idle
+      // After 5 seconds, return to previous mode
       if (stateTime >= 5000) {
         digitalWrite(VIBRATION_PIN, LOW);
-        currentState = IDLE;
+        currentState = previousState;
+        stateStartTime = millis();
+      }
+      break;
+    
+    case POSTURE_ALERT:
+      // Show posture alert
+      displayPostureAlert();
+      
+      // Vibration: rapid pulses for first 2 seconds
+      if (stateTime < 2000) {
+        unsigned long pulsePos = stateTime % 250;  // 150ms on + 100ms off
+        if (pulsePos < 150) {
+          digitalWrite(VIBRATION_PIN, HIGH);
+        } else {
+          digitalWrite(VIBRATION_PIN, LOW);
+        }
+      } else {
+        digitalWrite(VIBRATION_PIN, LOW);
+      }
+      
+      // After 5 seconds, return to previous mode
+      if (stateTime >= 5000) {
+        digitalWrite(VIBRATION_PIN, LOW);
+        currentState = previousState;
         stateStartTime = millis();
       }
       break;
