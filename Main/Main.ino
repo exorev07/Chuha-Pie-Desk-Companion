@@ -6,6 +6,9 @@
  * - 7-Pin SSD1306 OLED (128x64, SPI)
  * - TTP223 Capacitive Touch Sensor
  * - HC-SR04 Ultrasonic Distance Sensor
+ * - DHT11 Temperature & Humidity Sensor
+ * - Vibration Motor (5V, GPIO-driven)
+ * - RGB LED (Common Anode, 10mm diffused)
  * 
  * Pin Connections:
  * OLED GND  -> ESP32 GND
@@ -45,14 +48,24 @@
  * RGB LED Blue  -> ESP32 GPIO 33 (no resistor needed, Vf ~3.0-3.4V)
  * 
  * Features:
- * - Long press (>2s): Shows happy mood with laugh animation
- * - Single tap: Cycles through time, distance, and climate displays
- * - Double tap: Dizzy/confused animation with vertical flicker and angry mood
- * - Auto blink and idle movements
- * - WiFi + NTP for accurate time display
- * - Presence detection: Shows TIRED when alone, greets when someone sits down
- * - Temperature and humidity monitoring
- * - Haptic feedback on touch interactions
+ * - Touch interactions: single tap (mode enter), double tap (bonk), triple tap (brightness)
+ * - Long press (>2s): Happy mood with laugh animation + haptic feedback
+ * - 1s long press: Cycles through modes (Time > Stopwatch > Pomodoro > Spotify > Distance > Temp > Humidity)
+ * - 4s long press: Home shortcut (return to eyes from any display mode)
+ * - Time display with 12hr/24hr toggle (tap to switch)
+ * - Stopwatch with start/pause (tap) and reset (double tap)
+ * - Pomodoro timer (30/45/60/90/120 min, pause/resume, 10s auto-start)
+ * - Spotify control: play/pause (tap), next (double tap), prev (triple tap)
+ * - Distance, temperature, humidity displays
+ * - Brightness adjustment: 5 levels via 3 SSD1306 registers (triple tap from eyes)
+ * - Time-based default brightness: 100% daytime (7AM-7PM), 50% nighttime
+ * - Presence detection: greets on arrival, shows TIRED after 30s absence
+ * - Break reminder: hourly while present (green LED)
+ * - Posture alert: too close (<20cm for 3s) with 1min cooldown (red LED)
+ * - Water reminder: hourly + 1min after return from 30min absence (blue LED)
+ * - RGB LED pulses with vibration for 2s, then solid for 3s during alerts
+ * - Sweat animation above 35°C (10s every 5min)
+ * - Auto blink and idle eye movements
  */
 
 #include <SPI.h>
@@ -138,8 +151,6 @@ unsigned long touchDuration = 0;
 unsigned long lastTapTime = 0;
 bool isLongPress = false;
 bool homePressTriggered = false;           // Tracks 3s "home" long press (back to face)
-unsigned long lastAffectionVibration = 0;  // Track vibration timing for affection mode
-int bonkVibrationPulse = 0;                // Track which pulse we're on for bonk pattern
 
 // ============ PRESENCE DETECTION ============
 bool personPresent = false;
@@ -150,7 +161,7 @@ unsigned long lastDistanceDisplayUpdate = 0;
 bool rawPresenceDetected = false;           // Raw sensor reading
 unsigned long presenceChangeTime = 0;       // When raw detection last changed
 #define PRESENCE_GONE_DELAY 5000            // 5s before marking absent
-#define PRESENCE_ARRIVE_DELAY 200           // 700ms before marking present
+#define PRESENCE_ARRIVE_DELAY 50           // 50ms before marking present
 enum GreetingState {
   NO_GREETING,
   GREETING_CURIOUS,
@@ -224,7 +235,6 @@ const char* pomodoroLabels[] = {"30 Min", "45 Min", "1 Hr", "1.5 Hr", "2 Hr"};
 int pomodoroSelected = 0;               // Currently highlighted option (0-4)
 unsigned long pomodoroSelectionTime = 0; // When current option was selected
 unsigned long pomodoroEndTime = 0;       // When the timer should end
-bool pomodoroTouchHandled = false;       // Prevent multiple triggers per long press
 bool pomodoroPaused = false;             // Whether the timer is paused
 unsigned long pomodoroPausedRemaining = 0; // Remaining time when paused (ms)
 
@@ -442,7 +452,7 @@ void checkPresence() {
   float distance = getDistance();
   wasPersonPresent = personPresent;
   
-  // Use raw single reading for presence (has its own debounce logic)
+  // Check smoothed distance against threshold (debounce logic below)
   bool currentlyDetected = (distance > 0 && distance < DETECTION_DISTANCE);
   
   // Track when raw detection state changed
@@ -1640,7 +1650,6 @@ void handleTouch() {
           isLongPress = true;
           // Normal long press - show affection
           vibrate(200);  // Initial long press haptic feedback
-          lastAffectionVibration = millis();  // Track for periodic vibrations
           currentState = SHOWING_AFFECTION;
           stateStartTime = millis();
         }
@@ -1651,8 +1660,6 @@ void handleTouch() {
   // Falling edge - touch released
   if (!currentTouch && lastTouchState) {
     touchDuration = millis() - touchStartTime;
-    pomodoroTouchHandled = false;  // Re-enable Pomodoro cycling on next touch
-    
     // Handle different touch types
     if (isLongPress) {
       // Long press was shown, do nothing (already showing affection)
@@ -1827,10 +1834,9 @@ void updateState() {
       }
       
       // Continuous rapid vibration pulses synced with laughs (repeating every 2 seconds)
-      unsigned long pulseTime = stateTime % 2000;  // Loop every 2 seconds
       // 10 pulses: 100ms on, 100ms off (each cycle is 200ms)
-      int currentPulse = pulseTime / 200;       // Which pulse cycle we're in
-      int withinPulse = pulseTime % 200;        // Position within current cycle
+      int currentPulse = cycleTime / 200;       // Which pulse cycle we're in
+      int withinPulse = cycleTime % 200;        // Position within current cycle
       
       if (currentPulse < 10 && withinPulse < 100) {
         digitalWrite(VIBRATION_PIN, HIGH);
@@ -1863,7 +1869,6 @@ void updateState() {
         // Timeout - it was a double tap, bonk!
         currentState = BONKED;
         stateStartTime = millis();
-        bonkVibrationPulse = 0;
       }
       break;
       
