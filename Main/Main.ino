@@ -153,6 +153,7 @@ unsigned long presenceChangeTime = 0;       // When raw detection last changed
 #define PRESENCE_ARRIVE_DELAY 200           // 700ms before marking present
 enum GreetingState {
   NO_GREETING,
+  GREETING_NOTICED,
   GREETING_CURIOUS,
   GREETING_HAPPY,
   GREETING_DONE
@@ -467,7 +468,7 @@ void checkPresence() {
   // Check for state transitions
   if (personPresent && !wasPersonPresent) {
     // Person just arrived - start greeting sequence
-    greetingState = GREETING_CURIOUS;
+    greetingState = GREETING_NOTICED;
     greetingStartTime = millis();
     continuousPresenceStart = millis();  // Start tracking for break reminder
     breakReminderShown = false;
@@ -550,7 +551,10 @@ void checkPresence() {
   if (greetingState != NO_GREETING && greetingState != GREETING_DONE) {
     unsigned long greetingTime = millis() - greetingStartTime;
     
-    if (greetingState == GREETING_CURIOUS && greetingTime > 1000) {
+    if (greetingState == GREETING_NOTICED && greetingTime > 500) {
+      greetingState = GREETING_CURIOUS;
+      greetingStartTime = millis();
+    } else if (greetingState == GREETING_CURIOUS && greetingTime > 1000) {
       greetingState = GREETING_HAPPY;
       greetingStartTime = millis();
     } else if (greetingState == GREETING_HAPPY && greetingTime > 3000) {
@@ -1776,12 +1780,20 @@ void updateState() {
       
       // Handle presence-based behavior
       if (!personPresent) {
-        // Nobody detected - show tired
-        eyes.setMood(TIRED);
+        // Nobody detected - show tired only after 30s of absence
+        if (lastPresenceEnd > 0 && (millis() - lastPresenceEnd >= 30000)) {
+          eyes.setMood(TIRED);
+        } else {
+          eyes.setMood(DEFAULT);
+        }
       } else {
         
         // Someone present - check greeting sequence
-        if (greetingState == GREETING_CURIOUS) {
+        if (greetingState == GREETING_NOTICED) {
+          // Just noticed - stay default for 500ms
+          eyes.setMood(DEFAULT);
+          eyes.setCuriosity(false);
+        } else if (greetingState == GREETING_CURIOUS) {
           eyes.setMood(DEFAULT);
           eyes.setCuriosity(true);
           eyes.setPosition(N);  // Look up curiously
