@@ -38,6 +38,12 @@
  * Vibration Motor GND -> ESP32 GND
  * Vibration Motor SIG -> ESP32 GPIO 13
  * 
+ * RGB LED (Common Anode, 10mm diffused):
+ * RGB LED Anode (longest pin) -> ESP32 3.3V
+ * RGB LED Red   -> 100Ω resistor -> ESP32 GPIO 25
+ * RGB LED Green -> ESP32 GPIO 32 (no resistor needed, Vf ~3.0-3.4V)
+ * RGB LED Blue  -> ESP32 GPIO 33 (no resistor needed, Vf ~3.0-3.4V)
+ * 
  * Features:
  * - Long press (>2s): Shows happy mood with laugh animation
  * - Single tap: Cycles through time, distance, and climate displays
@@ -86,6 +92,14 @@ const int DAYLIGHT_OFFSET_SEC = 0;   // India doesn't use daylight saving
 #define ECHO_PIN    27 
 #define DHT_PIN     14 
 #define VIBRATION_PIN 13
+#define LED_RED_PIN   25
+#define LED_GREEN_PIN 32
+#define LED_BLUE_PIN  33
+
+// RGB LED PWM channels (common anode: 0=full on, 255=off)
+#define LED_RED_CH    0
+#define LED_GREEN_CH  1
+#define LED_BLUE_CH   2
 
 // ============ DHT11 SENSOR CONFIG ============
 #define DHT_TYPE DHT11
@@ -102,7 +116,7 @@ float lastTemperature = 0;
 bool isSweating = false;
 
 // ============ DISTANCE SENSOR CONFIG ============
-#define DETECTION_DISTANCE 50  // Distance in cm to detect presence (adjust as needed)
+#define DETECTION_DISTANCE 50  // Distance in cm to detect presence
 #define DISTANCE_CHECK_INTERVAL 500  // Check distance every 500ms
 float smoothedDistance = 0;           // EMA-smoothed distance for display
 bool smoothedDistanceInit = false;    // Whether EMA has been seeded
@@ -136,7 +150,7 @@ unsigned long lastDistanceDisplayUpdate = 0;
 bool rawPresenceDetected = false;           // Raw sensor reading
 unsigned long presenceChangeTime = 0;       // When raw detection last changed
 #define PRESENCE_GONE_DELAY 5000            // 5s before marking absent
-#define PRESENCE_ARRIVE_DELAY 700           // 700ms before marking present
+#define PRESENCE_ARRIVE_DELAY 200           // 700ms before marking present
 enum GreetingState {
   NO_GREETING,
   GREETING_CURIOUS,
@@ -151,7 +165,7 @@ bool breakReminderShown = false;             // Prevent repeated reminders
 #define BREAK_REMINDER_INTERVAL 3600000UL    // 1 hour in ms
 
 // ============ POSTURE ALERT ============
-#define POSTURE_DISTANCE 30               // Too close if under 30cm
+#define POSTURE_DISTANCE 20               // Too close if under 20cm
 #define POSTURE_SUSTAIN_TIME 3000         // Must stay too close for 3s before alert
 #define POSTURE_COOLDOWN 60000UL          // Don't re-alert within 1 minute
 bool tooCloseDetected = false;             // Raw: currently under threshold
@@ -285,6 +299,15 @@ void setup() {
   // Setup vibration motor (simple digitalWrite for better motor spin-up)
   pinMode(VIBRATION_PIN, OUTPUT);
   digitalWrite(VIBRATION_PIN, LOW);
+  
+  // Initialize RGB LED PWM channels (common anode: 255 = off)
+  ledcSetup(LED_RED_CH, 5000, 8);    // 5kHz, 8-bit resolution
+  ledcSetup(LED_GREEN_CH, 5000, 8);
+  ledcSetup(LED_BLUE_CH, 5000, 8);
+  ledcAttachPin(LED_RED_PIN, LED_RED_CH);
+  ledcAttachPin(LED_GREEN_PIN, LED_GREEN_CH);
+  ledcAttachPin(LED_BLUE_PIN, LED_BLUE_CH);
+  ledOff();  // Start with LED off
 }
 
 // ============ MAIN LOOP ============
@@ -1372,6 +1395,20 @@ void vibratePattern(int pulses, int pulseDuration, int gapDuration) {
   }
 }
 
+// ============ RGB LED HELPERS ============
+// Common anode: PWM 0 = full brightness, 255 = off
+void ledSetColor(byte r, byte g, byte b) {
+  ledcWrite(LED_RED_CH, 255 - r);
+  ledcWrite(LED_GREEN_CH, 255 - g);
+  ledcWrite(LED_BLUE_CH, 255 - b);
+}
+
+void ledOff() {
+  ledcWrite(LED_RED_CH, 255);
+  ledcWrite(LED_GREEN_CH, 255);
+  ledcWrite(LED_BLUE_CH, 255);
+}
+
 // ============ BREAK REMINDER DISPLAY ============
 void displayBreakReminder() {
   display.clearDisplay();
@@ -1430,7 +1467,7 @@ void displayWaterReminder() {
   display.setCursor(16, 18);
   display.println("Drink some water,");
   display.setCursor(14, 30);
-  display.println("Miss Sondhi! :)");
+  display.println("Miss Sondhi :)");
   display.setCursor(22, 46);
   display.println("Stay hydrated <3");
   
@@ -1983,9 +2020,9 @@ void updateState() {
         
         // Turn vibration on/off based on position
         if (currentPulse < 6 && withinPulse < 100) {
-          digitalWrite(VIBRATION_PIN, HIGH);  // Pulse on
+          digitalWrite(VIBRATION_PIN, HIGH);
         } else {
-          digitalWrite(VIBRATION_PIN, LOW);   // Gap or done
+          digitalWrite(VIBRATION_PIN, LOW);
         }
       }
       
@@ -1995,14 +2032,13 @@ void updateState() {
         eyes.setVFlicker(true, 5);
       }
       else if (stateTime < 3000) {
-          digitalWrite(VIBRATION_PIN, LOW);  // Ensure vibration is off
+          digitalWrite(VIBRATION_PIN, LOW);
           eyes.setVFlicker(false, 5);
           eyes.setMood(TIRED);
       }
       else if (stateTime < 6000) {
         // Phase 2: Show angry with CONTINUOUS vibration (3 seconds)
         eyes.setMood(ANGRY);
-        // Turn on continuous vibration during angry phase
         digitalWrite(VIBRATION_PIN, HIGH);
       }
       else {
@@ -2032,21 +2068,28 @@ void updateState() {
       // Show break reminder for 3 seconds
       displayBreakReminder();
       
-      // Vibration: 200ms on, 100ms off pulsating for first 2 seconds
+      // Green LED pulses with vibration for first 2s, then stays solid
       if (stateTime < 2000) {
-        unsigned long pulsePos = stateTime % 300;  // 200ms on + 100ms off = 300ms cycle
+        unsigned long pulsePos = stateTime % 300;
         if (pulsePos < 200) {
           digitalWrite(VIBRATION_PIN, HIGH);
+          ledSetColor(0, 255, 0);
         } else {
           digitalWrite(VIBRATION_PIN, LOW);
+          ledOff();
         }
       } else {
         digitalWrite(VIBRATION_PIN, LOW);
+        ledSetColor(0, 255, 0);
       }
       
       // After 5 seconds, return to previous mode
       if (stateTime >= 5000) {
         digitalWrite(VIBRATION_PIN, LOW);
+        ledOff();
+        // Reset so another reminder fires in 1 hour
+        breakReminderShown = false;
+        continuousPresenceStart = millis();
         currentState = previousState;
         stateStartTime = millis();
       }
@@ -2056,21 +2099,25 @@ void updateState() {
       // Show posture alert
       displayPostureAlert();
       
-      // Vibration: rapid pulses for first 2 seconds
+      // Red LED pulses with vibration for first 2s, then stays solid
       if (stateTime < 2000) {
-        unsigned long pulsePos = stateTime % 250;  // 150ms on + 100ms off
+        unsigned long pulsePos = stateTime % 250;
         if (pulsePos < 150) {
           digitalWrite(VIBRATION_PIN, HIGH);
+          ledSetColor(255, 0, 0);
         } else {
           digitalWrite(VIBRATION_PIN, LOW);
+          ledOff();
         }
       } else {
         digitalWrite(VIBRATION_PIN, LOW);
+        ledSetColor(255, 0, 0);
       }
       
       // After 5 seconds, return to previous mode
       if (stateTime >= 5000) {
         digitalWrite(VIBRATION_PIN, LOW);
+        ledOff();
         currentState = previousState;
         stateStartTime = millis();
       }
@@ -2080,21 +2127,25 @@ void updateState() {
       // Show water reminder
       displayWaterReminder();
       
-      // Gentle vibration: 150ms on, 150ms off for first 2 seconds
+      // Blue LED pulses with vibration for first 2s, then stays solid
       if (stateTime < 2000) {
         unsigned long pulsePos = stateTime % 300;
         if (pulsePos < 150) {
           digitalWrite(VIBRATION_PIN, HIGH);
+          ledSetColor(0, 0, 255);
         } else {
           digitalWrite(VIBRATION_PIN, LOW);
+          ledOff();
         }
       } else {
         digitalWrite(VIBRATION_PIN, LOW);
+        ledSetColor(0, 0, 255);
       }
       
       // After 5 seconds, return to previous mode
       if (stateTime >= 5000) {
         digitalWrite(VIBRATION_PIN, LOW);
+        ledOff();
         currentState = previousState;
         stateStartTime = millis();
       }
