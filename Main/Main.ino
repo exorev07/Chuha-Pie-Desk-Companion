@@ -341,7 +341,7 @@ void showStartupMessage() {
   display.println("Yashi Pie <3");
   
   display.display();
-  delay(5000);
+  delay(3000);
   
   display.clearDisplay();
   display.display();
@@ -349,36 +349,35 @@ void showStartupMessage() {
 
 // ============ WAKE UP ANIMATION ============
 void wakeUpEyes() {
+  // Force eyes to center position before starting
+  eyes.setPosition(DEFAULT);
+  eyes.setMood(DEFAULT);
+  eyes.setIdleMode(false, 2, 3);  // Disable idle during wake-up
+  
   // Wake up sequence
   eyes.close();
-  delay(500);
-  eyes.drawEyes();
-  delay(1000);
+  for(int i = 0; i < 30; i++) { eyes.update(); delay(33); }  // ~1s closed
   
+  // Blink a few times (waking up)
   for(int i = 0; i < 3; i++) {
     eyes.open();
-    eyes.drawEyes();
-    delay(200);
+    for(int j = 0; j < 6; j++) { eyes.update(); delay(33); }  // ~200ms open
     eyes.close();
-    eyes.drawEyes();
-    delay(200);
+    for(int j = 0; j < 6; j++) { eyes.update(); delay(33); }  // ~200ms closed
   }
   
+  // Open with happy mood
   eyes.open();
   eyes.setMood(HAPPY);
-  for(int i = 0; i < 20; i++) {
-    eyes.drawEyes();
-    delay(50);
-  }
+  for(int i = 0; i < 20; i++) { eyes.update(); delay(50); }  // ~1s happy
   
+  // Settle to default
   eyes.setMood(DEFAULT);
   eyes.setPosition(DEFAULT);
+  for(int i = 0; i < 30; i++) { eyes.update(); delay(33); }  // ~1s settle
   
-  // Let eyes settle to center position before entering main loop
-  for(int i = 0; i < 30; i++) {
-    eyes.update();
-    delay(33);  // ~30fps for 1 second
-  }
+  // Re-enable idle mode for main loop
+  eyes.setIdleMode(true, 2, 3);
 }
 
 // ============ DISTANCE MEASUREMENT ============
@@ -565,66 +564,72 @@ void connectToWiFi() {
   display.clearDisplay();
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
-  display.setCursor(0, 10);
-  display.println("Connecting WiFi!");
+  
+  // Line 1: WiFi status
+  display.setCursor(0, 5);
+  display.print("WiFi: Connecting");
   display.display();
   
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   
   int attempts = 0;
+  int dotCount = 0;
   while (WiFi.status() != WL_CONNECTED && attempts < 20) {
     delay(500);
-    display.print(".");
+    // Animate 1-3 dots, cycling
+    dotCount = (dotCount % 3) + 1;
+    display.fillRect(96, 5, 32, 8, SSD1306_BLACK);  // Clear dot area
+    display.setCursor(96, 5);
+    for (int i = 0; i < dotCount; i++) display.print(".");
     display.display();
     attempts++;
   }
   
-  display.clearDisplay();
+  // Line 2: WiFi result
+  display.setCursor(0, 18);
   if (WiFi.status() == WL_CONNECTED) {
-    display.setCursor(0, 10);
-    display.println("WiFi Connected!");
-    display.setCursor(0, 25);
-    display.println("Syncing time...");
+    display.print("> Connected!");
+    display.display();
+    delay(500);
+    
+    // Line 3: Time sync status
+    display.setCursor(0, 31);
+    display.print("Time: Syncing...");
     display.display();
     
-    // Configure time
     configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, NTP_SERVER);
     delay(2000);
     
-    display.clearDisplay();
-    display.setCursor(0, 20);
-    display.println("Time synced!");
-    display.display();
-    delay(1000);
-    
-    // Set brightness based on time of day
+    // Line 4: Time sync result
     struct tm timeinfo;
-    if (getLocalTime(&timeinfo, 5000)) {  // 5s timeout OK during setup
+    display.setCursor(0, 44);
+    if (getLocalTime(&timeinfo, 5000)) {
+      display.print("> Synced!");
+      display.display();
+      
+      // Set brightness based on time of day
       int hour = timeinfo.tm_hour;
       if (hour >= 7 && hour < 19) {
-        // 7 AM to 7 PM: 100% brightness
-        brightnessSelected = 4;  // index 4 = 100%
+        brightnessSelected = 4;  // 7AM-7PM: 100%
       } else {
-        // 7 PM to 7 AM: 50% brightness
-        brightnessSelected = 2;  // index 2 = 50%
+        brightnessSelected = 2;  // 7PM-7AM: 50%
       }
     } else {
-      brightnessSelected = 3;  // Fallback: 75% if time read fails
+      display.print("> Sync failed!");
+      display.display();
+      brightnessSelected = 3;  // Fallback: 75%
     }
     applyBrightness();
   } else {
-    display.setCursor(0, 10);
-    display.println("WiFi Failed!");
-    display.setCursor(0, 25);
-    display.println("Check credentials");
+    display.print("> Failed!");
     display.display();
-    delay(3000);
     
     // No WiFi: default to 75% brightness
-    brightnessSelected = 3;  // index 3 = 75%
+    brightnessSelected = 3;
     applyBrightness();
   }
   
+  delay(2000);
   display.clearDisplay();
   display.display();
 }
