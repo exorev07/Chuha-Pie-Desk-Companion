@@ -463,12 +463,12 @@ void checkPresence() {
   
   // Debounced presence: require sustained detection/absence
   if (rawPresenceDetected && !personPresent) {
-    // Someone detected but not yet confirmed — wait 1 second
+    // Someone detected but not yet confirmed
     if (millis() - presenceChangeTime >= PRESENCE_ARRIVE_DELAY) {
       personPresent = true;
     }
   } else if (!rawPresenceDetected && personPresent) {
-    // No one detected but still marked present — wait 10 seconds
+    // No one detected but still marked present — wait 5 seconds
     if (millis() - presenceChangeTime >= PRESENCE_GONE_DELAY) {
       personPresent = false;
     }
@@ -1504,7 +1504,7 @@ void handleTouch() {
   if (currentTouch) {
     touchDuration = millis() - touchStartTime;
     
-    // Universal home shortcut: 3s press returns to face from any display mode
+    // Universal home shortcut: 4s press returns to face from any display mode
     if (touchDuration >= 4000 && !homePressTriggered &&
         (currentState == SHOWING_TIME || currentState == STOPWATCH_MODE ||
          currentState == POMODORO_SELECT || currentState == POMODORO_RUNNING ||
@@ -2079,7 +2079,7 @@ void updateState() {
       break;
     
     case BREAK_REMINDER:
-      // Show break reminder for 3 seconds
+      // Show break reminder for 5 seconds
       displayBreakReminder();
       
       // Green LED pulses with vibration for first 2s, then stays solid
