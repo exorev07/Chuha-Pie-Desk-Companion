@@ -150,7 +150,7 @@ unsigned long touchStartTime = 0;
 unsigned long touchDuration = 0;
 unsigned long lastTapTime = 0;
 bool isLongPress = false;
-bool homePressTriggered = false;           // Tracks 3s "home" long press (back to face)
+bool homePressTriggered = false;           // Tracks 4s "home" long press (back to face)
 
 // ============ PRESENCE DETECTION ============
 bool personPresent = false;
@@ -503,7 +503,7 @@ void checkPresence() {
   if (tooCloseDetected && !postureAlertActive &&
       (millis() - tooCloseStartTime >= POSTURE_SUSTAIN_TIME) &&
       (millis() - lastPostureAlert >= POSTURE_COOLDOWN) &&
-      currentState != POSTURE_ALERT && currentState != BREAK_REMINDER) {
+      currentState != POSTURE_ALERT && currentState != BREAK_REMINDER && currentState != WATER_REMINDER) {
     postureAlertActive = true;
     lastPostureAlert = millis();
     previousState = currentState;
