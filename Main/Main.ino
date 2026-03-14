@@ -80,8 +80,8 @@
 #include <FluxGarage_RoboEyes.h>
 
 // ============ WIFI CREDENTIALS ============
-const char* WIFI_SSID = "M602 2.4Ghz";
-const char* WIFI_PASSWORD = "9490792745";
+const char* WIFI_SSID = "Virus.exe";
+const char* WIFI_PASSWORD = "Exorev@3727";
 
 // ============ SPOTIFY CREDENTIALS ============
 // Get these from https://developer.spotify.com/dashboard
