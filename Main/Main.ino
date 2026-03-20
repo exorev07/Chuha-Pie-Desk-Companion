@@ -1748,7 +1748,7 @@ void handleTouch() {
           pomodoroPaused = false;
         } else {
           // Pause: save remaining time
-          pomodoroPausedRemaining = pomodoroEndTime - millis();
+          pomodoroPausedRemaining = (millis() < pomodoroEndTime) ? (pomodoroEndTime - millis()) : 0;
           pomodoroPaused = true;
         }
         lastTapTime = 0;
