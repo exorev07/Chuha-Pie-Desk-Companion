@@ -1,5 +1,5 @@
 /*
- * Desk Companion with RoboEyes - Mochi Inspired
+ * Chuha Pie V1 - Desk Companion
  * 
  * Hardware:
  * - ESP32 DevKit V1
@@ -41,6 +41,11 @@
  * Vibration Motor GND -> ESP32 GND
  * Vibration Motor SIG -> ESP32 GPIO 13
  * 
+ * Power Switch:
+ * GND -> 10kΩ -> GPIO 35 -> [switch] -> 3.3V
+ * Switch open (OFF): GPIO35 LOW -> device enters deep sleep
+ * Switch closed (ON): GPIO35 HIGH -> device runs
+ *
  * RGB LED (Common Anode, 10mm diffused):
  * RGB LED Anode (longest pin) -> ESP32 3.3V
  * RGB LED Red   -> 100Ω resistor -> ESP32 GPIO 25
@@ -78,16 +83,17 @@
 #include <time.h>
 #include <DHT.h>
 #include <FluxGarage_RoboEyes.h>
+#include "secrets.h"
 
 // ============ WIFI CREDENTIALS ============
-const char* WIFI_SSID = "Virus.exe";
-const char* WIFI_PASSWORD = "Exorev@3727";
+const char* WIFI_SSID = WIFI_SSID_VAL;
+const char* WIFI_PASSWORD = WIFI_PASSWORD_VAL;
 
 // ============ SPOTIFY CREDENTIALS ============
-// Get these from https://developer.spotify.com/dashboard
-const char* SPOTIFY_CLIENT_ID = "6c396963e91b46e3b7ff16c763f0a669";
-const char* SPOTIFY_CLIENT_SECRET = "3444e3d5140846359851283f81b264c2";
-const char* SPOTIFY_REFRESH_TOKEN = "AQAY7FupeXQt3uukdL_VvzDLXR8GThtIuBmJUD-L6hpKYN_nVe_221tUB4nmZ00sxhN9qa3218kldwgWTKs74ds69kujunu6PshqanInKXNXw5lCL8OZCu11pbizH5_u5sg";
+// Edit credentials in secrets.h (that file is gitignored and never pushed)
+const char* SPOTIFY_CLIENT_ID = SPOTIFY_CLIENT_ID_VAL;
+const char* SPOTIFY_CLIENT_SECRET = SPOTIFY_CLIENT_SECRET_VAL;
+const char* SPOTIFY_REFRESH_TOKEN = SPOTIFY_REFRESH_TOKEN_VAL;
 
 // ============ TIME CONFIGURATION ============
 const char* NTP_SERVER = "pool.ntp.org";
@@ -108,6 +114,7 @@ const int DAYLIGHT_OFFSET_SEC = 0;   // India doesn't use daylight saving
 #define LED_RED_PIN   25
 #define LED_GREEN_PIN 32
 #define LED_BLUE_PIN  33
+#define POWER_SWITCH_PIN 35  // Input-only RTC GPIO, external 10kΩ pulldown to GND, switch to 3.3V
 
 // RGB LED PWM channels (common anode: 0=full on, 255=off)
 #define LED_RED_CH    0
@@ -276,53 +283,58 @@ void applyBrightness() {
 
 void setup() {
   Serial.begin(115200);
-  
+
   // Initialize display
   if(!display.begin(SSD1306_SWITCHCAPVCC)) {
     for(;;);
   }
-  
   display.clearDisplay();
   display.display();
-  
-  // Initialize RoboEyes
-  eyes.begin(SCREEN_WIDTH, SCREEN_HEIGHT, MAX_FPS);
-  eyes.setAutoblinker(true, 3, 2);  // Auto blink every 3-5 seconds
-  eyes.setIdleMode(true, 2, 3);     // Idle movements every 2-5 seconds
-  
-  // Configure eye appearance
-  eyes.setWidth(45, 45);
-  eyes.setHeight(30, 30);
-  eyes.setBorderradius(10, 10);
-  eyes.setSpacebetween(15);
-  
-  showStartupMessage(); // Show startup message
-  connectToWiFi(); // Connect to WiFi
-  wakeUpEyes(); // Wake up eyes
-  dht.begin(); // Initialize DHT sensor
-  pinMode(TOUCH_PIN, INPUT); // Setup touch sensor
-  
-  // Setup ultrasonic sensor
-  pinMode(TRIG_PIN, OUTPUT);
-  pinMode(ECHO_PIN, INPUT);
-  
-  // Setup vibration motor (simple digitalWrite for better motor spin-up)
+
+  // Initialize outputs required for a clean goToSleep() shutdown
   pinMode(VIBRATION_PIN, OUTPUT);
   digitalWrite(VIBRATION_PIN, LOW);
-  
-  // Initialize RGB LED PWM channels (common anode: 255 = off)
-  ledcSetup(LED_RED_CH, 5000, 8);    // 5kHz, 8-bit resolution
+  ledcSetup(LED_RED_CH, 5000, 8);
   ledcSetup(LED_GREEN_CH, 5000, 8);
   ledcSetup(LED_BLUE_CH, 5000, 8);
   ledcAttachPin(LED_RED_PIN, LED_RED_CH);
   ledcAttachPin(LED_GREEN_PIN, LED_GREEN_CH);
   ledcAttachPin(LED_BLUE_PIN, LED_BLUE_CH);
-  ledOff();  // Start with LED off
+  ledOff();
+
+  // Power switch: check BEFORE expensive boot (WiFi, animations)
+  // If OFF at power-on, sleep immediately without running startup sequence
+  pinMode(POWER_SWITCH_PIN, INPUT);
+  if (digitalRead(POWER_SWITCH_PIN) == LOW) goToSleep();
+
+  // --- Switch is ON, proceed with full boot ---
+
+  // Initialize RoboEyes
+  eyes.begin(SCREEN_WIDTH, SCREEN_HEIGHT, MAX_FPS);
+  eyes.setAutoblinker(true, 3, 2);  // Auto blink every 3-5 seconds
+  eyes.setIdleMode(true, 2, 3);     // Idle movements every 2-5 seconds
+
+  // Configure eye appearance
+  eyes.setWidth(45, 45);
+  eyes.setHeight(30, 30);
+  eyes.setBorderradius(10, 10);
+  eyes.setSpacebetween(15);
+
+  showStartupMessage(); // Show startup message
+  connectToWiFi(); // Connect to WiFi
+  wakeUpEyes(); // Wake up eyes
+  dht.begin(); // Initialize DHT sensor
+  pinMode(TOUCH_PIN, INPUT); // Setup touch sensor
+
+  // Setup ultrasonic sensor
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
 }
 
 // ============ MAIN LOOP ============
 void loop() {
   checkPresence();
+  if (digitalRead(POWER_SWITCH_PIN) == LOW) goToSleep();
   handleTouch();
   updateState();
   
@@ -503,7 +515,8 @@ void checkPresence() {
   if (tooCloseDetected && !postureAlertActive &&
       (millis() - tooCloseStartTime >= POSTURE_SUSTAIN_TIME) &&
       (millis() - lastPostureAlert >= POSTURE_COOLDOWN) &&
-      currentState != POSTURE_ALERT && currentState != BREAK_REMINDER && currentState != WATER_REMINDER) {
+      currentState != POSTURE_ALERT && currentState != BREAK_REMINDER && currentState != WATER_REMINDER &&
+      currentState != WAITING_FOR_SECOND_TAP && currentState != WAITING_FOR_THIRD_TAP) {
     postureAlertActive = true;
     lastPostureAlert = millis();
     previousState = currentState;
@@ -514,7 +527,8 @@ void checkPresence() {
   // --- Break reminder: 1 hour continuous presence (any mode) ---
   if (personPresent && !breakReminderShown &&
       (millis() - continuousPresenceStart >= BREAK_REMINDER_INTERVAL) &&
-      currentState != BREAK_REMINDER && currentState != POSTURE_ALERT) {
+      currentState != BREAK_REMINDER && currentState != POSTURE_ALERT &&
+      currentState != WAITING_FOR_SECOND_TAP && currentState != WAITING_FOR_THIRD_TAP) {
     breakReminderShown = true;
     previousState = currentState;
     currentState = BREAK_REMINDER;
@@ -522,7 +536,8 @@ void checkPresence() {
   }
   
   // --- Water reminder: hourly + 1min after return from long absence ---
-  bool canShowWater = (currentState != WATER_REMINDER && currentState != BREAK_REMINDER && currentState != POSTURE_ALERT);
+  bool canShowWater = (currentState != WATER_REMINDER && currentState != BREAK_REMINDER && currentState != POSTURE_ALERT &&
+                       currentState != WAITING_FOR_SECOND_TAP && currentState != WAITING_FOR_THIRD_TAP);
   
   // Trigger 1: Person returned after long absence (>30min) — remind after 1min
   if (personPresent && !wasPersonPresent && lastPresenceEnd > 0) {
@@ -666,8 +681,8 @@ void displayCurrentTime() {
     display.setTextColor(SSD1306_WHITE);
     display.setCursor(1, 22);
     display.println("Time/Date Unavailable");
-    display.setCursor(7, 34);
-    display.println("Wifi not connected!");
+    display.setCursor(16, 34);
+    display.println("NTP sync failed!");
     display.display();
     return;
   }
@@ -1004,8 +1019,9 @@ void displayPomodoroCountdown() {
   unsigned long totalTime = (unsigned long)pomodoroOptions[pomodoroSelected] * 60000UL;
   unsigned long elapsed = totalTime - remaining;
   int barWidth = map(elapsed, 0, totalTime, 0, 120);
+  if (barWidth > 120) barWidth = 120;
   display.drawRect(4, 55, 120, 7, SSD1306_WHITE);
-  display.fillRect(4, 55, barWidth, 7, SSD1306_WHITE);
+  if (barWidth > 0) display.fillRect(6, 57, barWidth, 3, SSD1306_WHITE);
   
   display.display();
 }
@@ -1489,6 +1505,20 @@ void displayWaterReminder() {
   display.display();
 }
 
+// ============ POWER SWITCH / DEEP SLEEP ============
+void goToSleep() {
+  // Clean shutdown before sleeping
+  digitalWrite(VIBRATION_PIN, LOW);
+  ledOff();
+  display.clearDisplay();
+  display.display();
+  display.ssd1306_command(SSD1306_DISPLAYOFF);
+
+  // Wake when switch is flipped back ON (GPIO35 goes HIGH)
+  esp_sleep_enable_ext0_wakeup(GPIO_NUM_35, HIGH);
+  esp_deep_sleep_start();
+}
+
 // ============ TOUCH HANDLING ============
 void handleTouch() {
   bool currentTouch = digitalRead(TOUCH_PIN);
@@ -1725,7 +1755,7 @@ void handleTouch() {
       } else if (currentState == SHOWING_TIME) {
         // Tap in time mode: toggle 12hr/24hr format
         time24HourFormat = !time24HourFormat;
-        vibrate(150);
+        vibrate(200);
         lastTapTime = 0;
       } else if (currentState == SHOWING_DISTANCE || currentState == SHOWING_TEMPERATURE || currentState == SHOWING_HUMIDITY) {
         // These modes use long press to cycle - ignore taps
@@ -2164,5 +2194,6 @@ void updateState() {
         stateStartTime = millis();
       }
       break;
+
   }
 }
