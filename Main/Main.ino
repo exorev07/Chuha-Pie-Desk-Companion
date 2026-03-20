@@ -136,11 +136,16 @@ float lastTemperature = 0;
 bool isSweating = false;
 
 // ============ DISTANCE SENSOR CONFIG ============
-#define DETECTION_DISTANCE 50  // Distance in cm to detect presence
 #define DISTANCE_CHECK_INTERVAL 500  // Check distance every 500ms
 float smoothedDistance = 0;           // EMA-smoothed distance for display
 bool smoothedDistanceInit = false;    // Whether EMA has been seeded
 #define EMA_ALPHA 0.3                 // EMA weight (0.1=very smooth, 0.5=responsive)
+
+// ============ DISTANCE SETTINGS ============
+// Each index pairs a presence detection range with a posture alert threshold
+const int detectionOptions[] = {30, 50, 75, 100, 125};  // cm — how far away to detect presence
+const int postureOptions[]   = {15, 20, 30,  40,  50};  // cm — too-close posture threshold per level
+int distanceSelected = 1;  // Default: 50cm detection / 20cm posture (matches original values)
 
 // ============ DISPLAY SETUP ============
 #define SCREEN_WIDTH  128
@@ -183,7 +188,6 @@ bool breakReminderShown = false;             // Prevent repeated reminders
 #define BREAK_REMINDER_INTERVAL 3600000UL    // 1 hour in ms
 
 // ============ POSTURE ALERT ============
-#define POSTURE_DISTANCE 20               // Too close if under 20cm
 #define POSTURE_SUSTAIN_TIME 3000         // Must stay too close for 3s before alert
 #define POSTURE_COOLDOWN 60000UL          // Don't re-alert within 1 minute
 bool tooCloseDetected = false;             // Raw: currently under threshold
@@ -217,6 +221,7 @@ enum State {
   SHOWING_TEMPERATURE,
   SHOWING_HUMIDITY,
   BRIGHTNESS_ADJUST,
+  DISTANCE_ADJUST,
   BONKED,
   RECOVERING,
   BREAK_REMINDER,
@@ -339,7 +344,7 @@ void loop() {
   updateState();
   
   // Only update eyes when not showing info displays
-  if (currentState != SHOWING_TIME && currentState != STOPWATCH_MODE && currentState != SHOWING_DISTANCE && currentState != SHOWING_TEMPERATURE && currentState != SHOWING_HUMIDITY && currentState != POMODORO_SELECT && currentState != POMODORO_RUNNING && currentState != BREAK_REMINDER && currentState != SPOTIFY_MODE && currentState != POSTURE_ALERT && currentState != WATER_REMINDER && currentState != BRIGHTNESS_ADJUST) {
+  if (currentState != SHOWING_TIME && currentState != STOPWATCH_MODE && currentState != SHOWING_DISTANCE && currentState != SHOWING_TEMPERATURE && currentState != SHOWING_HUMIDITY && currentState != POMODORO_SELECT && currentState != POMODORO_RUNNING && currentState != BREAK_REMINDER && currentState != SPOTIFY_MODE && currentState != POSTURE_ALERT && currentState != WATER_REMINDER && currentState != BRIGHTNESS_ADJUST && currentState != DISTANCE_ADJUST) {
     eyes.update();
   }
 }
@@ -465,7 +470,7 @@ void checkPresence() {
   wasPersonPresent = personPresent;
   
   // Check smoothed distance against threshold (debounce logic below)
-  bool currentlyDetected = (distance > 0 && distance < DETECTION_DISTANCE);
+  bool currentlyDetected = (distance > 0 && distance < detectionOptions[distanceSelected]);
   
   // Track when raw detection state changed
   if (currentlyDetected != rawPresenceDetected) {
@@ -502,7 +507,7 @@ void checkPresence() {
   }
   
   // --- Posture alert: too close detection (any mode) ---
-  bool currentlyTooClose = (distance > 0 && distance < POSTURE_DISTANCE);
+  bool currentlyTooClose = (distance > 0 && distance < postureOptions[distanceSelected]);
   if (currentlyTooClose && !tooCloseDetected) {
     tooCloseDetected = true;
     tooCloseStartTime = millis();
@@ -736,8 +741,8 @@ void displayStopwatch() {
   
   // Header - "Stopwatch"
   display.setTextSize(1);
-  display.setCursor(35, 2);
-  display.println("Stopwatch");
+  display.setCursor(38, 2);
+  display.println("STOPWATCH");
   display.drawLine(0, 11, 128, 11, SSD1306_WHITE);
   
   // Calculate current elapsed time
@@ -806,7 +811,7 @@ void displayDistance() {
   // Title
   display.setTextSize(1);
   display.setCursor(10, 10);
-  display.println("Distance:");
+  display.println("DISTANCE:");
   
   // Large distance display
   display.setTextSize(3);
@@ -847,7 +852,7 @@ void displayTemperature() {
   // Title
   display.setTextSize(1);
   display.setCursor(10, 10);
-  display.println("Temperature:");
+  display.println("TEMPERATURE:");
   
   // Large temperature display
   display.setTextSize(3);
@@ -877,7 +882,7 @@ void displayHumidity() {
   // Title
   display.setTextSize(1);
   display.setCursor(10, 10);
-  display.println("Humidity:");
+  display.println("HUMIDITY:");
   
   // Large humidity display
   display.setTextSize(3);
@@ -894,10 +899,10 @@ void displayBrightness() {
   display.clearDisplay();
   display.setTextColor(SSD1306_WHITE);
   
-  // Header (Spotify style)
+  // Header
   display.setTextSize(1);
-  display.setCursor(28, 2);
-  display.print("Brightness");
+  display.setCursor(25, 2);
+  display.print("BRIGHTNESS (%)");
   display.drawLine(4, 11, 123, 11, SSD1306_WHITE);
   
   // Options in horizontal row: 5, 25, 50, 75, 100
@@ -924,15 +929,57 @@ void displayBrightness() {
     display.print(label);
   }
   
-  // Percentage sign after the row
-  display.setCursor(100, optionY + 16);
-  display.print("%");
-  
   // Progress bar at bottom (matching Spotify style)
   int barWidth = map(brightnessOptions[brightnessSelected], 0, 100, 0, 116);
   display.drawRect(4, 55, 120, 7, SSD1306_WHITE);
   if (barWidth > 0) display.fillRect(6, 57, barWidth, 3, SSD1306_WHITE);
   
+  display.display();
+}
+
+// ============ DISTANCE SETTINGS DISPLAY ============
+void displayDistanceAdjust() {
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+
+  // Header
+  display.setTextSize(1);
+  display.setCursor(8, 2);
+  display.print("PRESENCE RANGE (cm)");
+  display.drawLine(4, 11, 123, 11, SSD1306_WHITE);
+
+  // Options in horizontal row: 30, 50, 75, 100, 125 cm
+  int optionWidth = 24;
+  int startX = 4;
+  int optionY = 24;
+
+  display.setTextSize(1);
+  for (int i = 0; i < 5; i++) {
+    int x = startX + (i * optionWidth);
+
+    if (i == distanceSelected) {
+      display.drawRect(x, optionY - 2, optionWidth, 14, SSD1306_WHITE);
+    }
+
+    char label[5];
+    sprintf(label, "%d", detectionOptions[i]);
+    int labelWidth = strlen(label) * 6;
+    int textX = x + (optionWidth - labelWidth) / 2;
+    display.setCursor(textX, optionY + 1);
+    display.print(label);
+  }
+
+  // Posture threshold hint
+  display.setCursor(4, 44);
+  display.print("Posture alert: <");
+  display.print(postureOptions[distanceSelected]);
+  display.print("cm");
+
+  // Progress bar at bottom
+  int barWidth = map(distanceSelected, 0, 4, 0, 116);
+  display.drawRect(4, 55, 120, 7, SSD1306_WHITE);
+  if (barWidth > 0) display.fillRect(6, 57, barWidth, 3, SSD1306_WHITE);
+
   display.display();
 }
 
@@ -944,7 +991,7 @@ void displayPomodoroSelect() {
   // Title
   display.setTextSize(1);
   display.setCursor(10, 2);
-  display.println("Pomodoro:");
+  display.println("POMODORO:");
   
   // Show all 5 options, highlight selected
   for (int i = 0; i < 5; i++) {
@@ -1346,8 +1393,8 @@ void displaySpotify() {
   
   // Header
   display.setTextSize(1);
-  display.setCursor(40, 2);
-  display.println("Spotify");
+  display.setCursor(44, 2);
+  display.println("SPOTIFY");
   display.drawLine(4, 11, 123, 11, SSD1306_WHITE);
   
   // Track name
@@ -1648,8 +1695,17 @@ void handleTouch() {
         stateStartTime = millis();
       }
     }
-    // Brightness adjust: long press exits back to eyes
+    // Brightness adjust: long press opens Distance settings
     else if (currentState == BRIGHTNESS_ADJUST) {
+      if (touchDuration >= 1000 && !isLongPress) {
+        isLongPress = true;
+        vibrate(200);
+        currentState = DISTANCE_ADJUST;
+        stateStartTime = millis();
+      }
+    }
+    // Distance adjust: long press exits back to eyes
+    else if (currentState == DISTANCE_ADJUST) {
       if (touchDuration >= 1000 && !isLongPress) {
         isLongPress = true;
         vibrate(200);
@@ -1765,6 +1821,11 @@ void handleTouch() {
         vibrate(150);
         brightnessSelected = (brightnessSelected + 1) % 5;
         applyBrightness();
+        lastTapTime = 0;
+      } else if (currentState == DISTANCE_ADJUST) {
+        // Tap cycles through distance options
+        vibrate(150);
+        distanceSelected = (distanceSelected + 1) % 5;
         lastTapTime = 0;
       } else {
         // First tap - wait for possible second tap
@@ -2048,10 +2109,15 @@ void updateState() {
     case BRIGHTNESS_ADJUST:
       // Display brightness adjustment screen
       displayBrightness();
-      
       // Note: Tap to cycle brightness is handled in handleTouch()
       break;
-      
+
+    case DISTANCE_ADJUST:
+      // Display distance/presence settings screen
+      displayDistanceAdjust();
+      // Note: Tap to cycle options is handled in handleTouch()
+      break;
+
     case BONKED: {
       // Show bonked animation with timing + vibration pulses synced with animation
       
