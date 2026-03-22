@@ -2,7 +2,7 @@
 Spotify Refresh Token Helper for Chuha Pie 1.0
 ================================================
 Run this script ONCE on your computer to get a refresh token.
-Then paste the refresh token into Main_RoboEyes_Version.ino
+Then paste the refresh token into Main/secrets.h
 
 Steps:
 1. Go to https://developer.spotify.com/dashboard
@@ -19,8 +19,8 @@ import requests
 import json
 import sys
 
-CLIENT_ID = "6c396963e91b46e3b7ff16c763f0a669"
-CLIENT_SECRET = "3444e3d5140846359851283f81b264c2"
+CLIENT_ID = ""
+CLIENT_SECRET = ""
 
 REDIRECT_URI = "http://127.0.0.1:8888/callback"
 SCOPES = "user-read-playback-state user-modify-playback-state user-read-currently-playing"
@@ -59,13 +59,17 @@ class CallbackHandler(http.server.BaseHTTPRequestHandler):
 
 
 def main():
-    if CLIENT_ID == "YOUR_CLIENT_ID_HERE" or CLIENT_SECRET == "YOUR_CLIENT_SECRET_HERE":
-        print("=" * 50)
-        print("ERROR: Edit this file first!")
-        print("Replace CLIENT_ID and CLIENT_SECRET with your")
-        print("values from https://developer.spotify.com/dashboard")
-        print("=" * 50)
-        sys.exit(1)
+    global CLIENT_ID, CLIENT_SECRET
+
+    print("=" * 50)
+    print("Spotify Refresh Token Helper — Chuha Pie")
+    print("=" * 50)
+    print("Get your Client ID and Secret from:")
+    print("https://developer.spotify.com/dashboard")
+    print()
+    CLIENT_ID = input("Enter your Client ID: ").strip()
+    CLIENT_SECRET = input("Enter your Client Secret: ").strip()
+    print()
 
     # Build authorization URL
     auth_params = {
@@ -118,7 +122,7 @@ def main():
     print(tokens["access_token"][:40] + "...")
     print("=" * 50)
     print("\nPaste the refresh token as SPOTIFY_REFRESH_TOKEN in")
-    print("Main_RoboEyes_Version.ino and you're good to go!")
+    print("Main/secrets.h and you're good to go!")
 
 
 if __name__ == "__main__":
