@@ -1,8 +1,7 @@
-# Chuha Pie V1 — A Cute Desk Companion
-
-_An ESP32-powered animated desk companion with OLED eyes, touch interactions, Spotify controls, presence detection, and environmental monitoring — housed in a custom 3D-printed enclosure._
-
-![Device](assets/device.png)
+<div align="center">
+   
+# Chuha Pie V1 - A Cute Desk Companion
+*An ESP32-powered animated desk companion with OLED eyes, touch interactions, Spotify controls, presence detection, and environmental monitoring, housed in a custom 3D-printed enclosure.*
 
 [![Platform](https://img.shields.io/badge/Platform-ESP32-blue?logo=espressif)](https://www.espressif.com/)
 [![Framework](https://img.shields.io/badge/Framework-Arduino-00979D?logo=arduino)](https://www.arduino.cc/)
@@ -10,6 +9,10 @@ _An ESP32-powered animated desk companion with OLED eyes, touch interactions, Sp
 [![Spotify](https://img.shields.io/badge/Spotify-API%20Integrated-1DB954?logo=spotify)](https://developer.spotify.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
+
+</div>
+
+![Device](assets/device.png)
 ---
 
 ## 📖 Table of Contents
