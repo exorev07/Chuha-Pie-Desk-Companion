@@ -299,16 +299,18 @@ Chuha Pie V1/
 
 ---
 
-<div align="center">
-
 ## 📜 License
 
-This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
+This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
 
 ---
 
 **⭐ If you like this project, consider giving it a star!**
 
+<div align="center">
+
 _Built with ❤️ for my girlfriend as her 20th Birthday Present._
 
 </div>
+
+---
