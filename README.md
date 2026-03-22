@@ -9,10 +9,10 @@
 [![Spotify](https://img.shields.io/badge/Spotify-API%20Integrated-1DB954?logo=spotify)](https://developer.spotify.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
+![Device](assets/device.png)
 
 </div>
 
-![Device](assets/device.png)
 ---
 
 ## 📖 Table of Contents
@@ -31,18 +31,18 @@
 
 ## 🔍 Overview
 
-Chuha Pie V1 is a handbuilt desk companion that sits on your desk and keeps you company. It uses animated OLED eyes to express mood, reacts to your presence and touch, reminds you to take breaks and drink water, tracks your Spotify playback, and can run a Pomodoro timer — all running locally on an ESP32 with no external compute required.
+Chuha Pie V1 is a hand-built desk companion that sits on your desk and keeps you company. It uses animated OLED eyes to express mood, reacts to your presence and touch, reminds you to take breaks and drink water, tracks your Spotify playback, and can run a Pomodoro timer - all running locally on an ESP32.
 
-Key highlights:
+**Key highlights:**
 
-- **Animated OLED eyes** with blink, idle movement, and mood expressions
-- **Touch interactions** — tap, double tap, triple tap, and long press gestures
-- **Presence detection** via HC-SR04 — greets you when you sit down, goes tired when you leave
-- **Spotify control** — play/pause, next, previous without touching your phone
-- **Pomodoro timer** with auto-start, pause/resume, and configurable durations
-- **Passive wellness reminders** — posture alerts, break reminders, water reminders via RGB LED
-- **Environmental display** — temperature, humidity, distance readouts on demand
-- **Deep sleep via physical switch** — turns off even with USB connected
+- **Animated OLED eyes** with blink, idle movement, and mood expressions.
+- **Touch interactions** - tap, double tap, triple tap, and long press gestures.
+- **Presence detection** via HC-SR04  greets you when you sit down, gets sad when you leave.
+- **Spotify control** - play/pause, next, previous track - through touch controls.
+- **Pomodoro timer** with auto-start (10s), pause/resume, and configurable durations from the internal menu.
+- **Passive wellness reminders** - posture alerts, break reminders, water reminders via RGB LED.
+- **Environmental display** - temperature, humidity, distance readouts on demand
+- **Deep sleep via physical switch** - turns off even with USB connected
 
 ---
 
@@ -151,9 +151,9 @@ GND → 10kΩ → GPIO 35 → [switch] → 3.3V
 
 ### Feature Cycle
 
-**Date & Time → Stopwatch → Pomodoro → Spotify → Distance → Temperature → Humidity → Home**
+**Home → Date & Time → Stopwatch → Pomodoro → Spotify → Distance → Temperature → Humidity → Home**
 
-Long press advances to the next mode. A 4-second long press from any mode jumps directly home.
+> **Shortcut**: Long press advances to the next mode. A 4-second long press from any mode jumps directly to home.
 
 | Mode | Single Tap | Double Tap | Triple Tap |
 |---|---|---|---|
@@ -165,20 +165,20 @@ Long press advances to the next mode. A 4-second long press from any mode jumps 
 
 ### Settings (Triple Tap from Home)
 
-- **Brightness** — 5 levels: 5% → 25% → 50% → 75% → 100%
-- **Presence Range** (long press from Brightness) — configures detection distance: 30 / 50 / 75 / 100 / 125 cm. Posture alert threshold adjusts proportionally (~40% of detection distance).
+- **Brightness**: 5 levels: 5% / 25% / 50% / 75% / 100%
+- **Presence Range** (long press from Brightness): configures detection distance to 30 / 50 / 75 / 100 / 125 cm. The posture alert threshold adjusts proportionally (~40% of the detection distance).
 
 ### Automatic / Background Features
 
 | Feature | Trigger | Indicator |
 |---|---|---|
 | Presence detection | Enters detection range | Greeting eye animation |
-| Tired eyes | No presence for 30+ seconds | Eye animation |
+| Sad eyes | No presence for 30+ seconds | Eye animation |
 | Break reminder | 1 hour of continuous presence | Green LED + vibration |
 | Posture alert | Too close for 3+ seconds | Red LED + vibration (1 min cooldown) |
 | Water reminder | Every hour / 1 min after 30+ min absence | Blue LED + vibration |
 | Sweat animation | Temperature > 35°C | Eye animation (10s every 5 min) |
-| Auto brightness | Time of day | 100% (7AM–7PM), 50% (night) |
+| Auto brightness | Time of day | 100% (7AM–7PM), 50% (7PM-7AM), 75% (No Internet default) |
 
 ---
 
@@ -227,7 +227,7 @@ Or download the ZIP from GitHub and extract it.
 
 ### 3️⃣ Configure Your Credentials
 
-1. Copy `Main/secrets.h.example` and rename the copy to `Main/secrets.h`
+1. Copy `Main/example_secrets.h.` and rename the copy to `Main/secrets.h`
 2. Open `Main/secrets.h` and fill in your details:
 
    ```cpp
@@ -239,9 +239,7 @@ Or download the ZIP from GitHub and extract it.
    #define SPOTIFY_REFRESH_TOKEN_VAL "paste_refresh_token_here"
    ```
 
-> `secrets.h` is gitignored and will never be pushed to the repository.
-
-### 4️⃣ Set Up Spotify _(optional)_
+### 4️⃣ Setting Up Spotify
 
 1. Go to [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard) and create an app
 2. Set the redirect URI to `http://127.0.0.1:8888/callback`
@@ -254,23 +252,23 @@ Or download the ZIP from GitHub and extract it.
 
 5. Paste the printed Refresh Token into `secrets.h`
 
-> Chuha Pie controls whichever device is currently active on your Spotify. Make sure something is playing before switching to Spotify mode.
+> This device can control whichever device is currently active on the Spotify account.
 
 ### 5️⃣ Upload to the Device
 
-1. Plug in Chuha Pie via USB
+1. Plug in the device via USB
 2. In Arduino IDE: **Tools → Board** → select **ESP32 Dev Module** or **DOIT ESP32 DevKit V1**
 3. **Tools → Port** → select the COM port that appears (e.g. COM3 on Windows)
 4. Click the **Upload** button (→)
 5. If the IDE shows `Connecting...`, hold the **BOOT** button on the ESP32 until uploading starts
-6. Wait for _"Done uploading"_ — Chuha Pie restarts automatically
+6. Wait for _"Done uploading"_ - Chuha Pie restarts automatically
 
 ---
 
 ## ⚡ Power
 
 - Powered via USB through the ESP32 DevKit V1 onboard regulator (AMS1117 3.3V)
-- The physical switch triggers ESP32 **deep sleep** — effectively turning the device off even with USB connected
+- The physical switch triggers ESP32 **deep sleep** - effectively turning the device off even with USB connected
 - To wake: flip the switch to ON (GPIO 35 goes HIGH, ESP32 exits deep sleep and reboots)
 
 ---
@@ -279,14 +277,20 @@ Or download the ZIP from GitHub and extract it.
 
 ```text
 Chuha Pie V1/
+├── 📂 3D Print Enclosure/
+│   ├── back_plate.stl
+│   ├── esp_button_connector.stl
+│   └── main_body.stl
+|
 ├── 📂 Main/
 │   ├── Main.ino              # Main firmware (~2200 lines)
-│   ├── secrets.h             # Your credentials (gitignored, never committed)
-│   └── secrets.h.example     # Template — copy and rename to secrets.h
+│   └── example_secrets.h     # Upon downloading - Rename to secrets.h and follow the instructions.
 │
 ├── 📂 assets/
-│   └── device.png            # 3D enclosure render
+│   └── device.png            # 3D render of the device
 │
+├── Chuha Pie User Manual.pdf # Detailed instructions
+├── CMD Serial Monitor.txt # Use to output the serial data from ESP32 in spotify mode directly on the computer
 ├── spotify_get_refresh_token.py  # Helper script to generate Spotify refresh token
 ├── .gitignore
 ├── LICENSE
@@ -294,6 +298,8 @@ Chuha Pie V1/
 ```
 
 ---
+
+<div align="center">
 
 ## 📜 License
 
@@ -303,4 +309,6 @@ This project is licensed under the **MIT License** — see the [LICENSE](LICENSE
 
 **⭐ If you like this project, consider giving it a star!**
 
-_Built with ❤️ for a desk that feels alive._
+_Built with ❤️ for my girlfriend as her 20th Birthday Present._
+
+</div>
