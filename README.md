@@ -253,7 +253,7 @@ Or download the ZIP from GitHub and extract it.
 
 ### 3️⃣ Configure Your Credentials
 
-1. Copy `Main/example_secrets.h.` and rename the copy to `Main/secrets.h`
+1. Copy `Main/example_secrets.h` and rename the copy to `Main/secrets.h`
 2. Open `Main/secrets.h` and fill in your details:
 
    ```cpp
