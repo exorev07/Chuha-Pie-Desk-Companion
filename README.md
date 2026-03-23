@@ -257,12 +257,12 @@ Or download the ZIP from GitHub and extract it.
 2. Open `Main/secrets.h` and fill in your details:
 
    ```cpp
-   #define WIFI_SSID_VAL     "Your WiFi Name"
-   #define WIFI_PASSWORD_VAL "Your WiFi Password"
+   #define WIFI_SSID_VAL     "WiFi Name (2.4GHz)"
+   #define WIFI_PASSWORD_VAL "WiFi Password"
 
-   #define SPOTIFY_CLIENT_ID_VAL     "paste_client_id_here"
-   #define SPOTIFY_CLIENT_SECRET_VAL "paste_client_secret_here"
-   #define SPOTIFY_REFRESH_TOKEN_VAL "paste_refresh_token_here"
+   #define SPOTIFY_CLIENT_ID_VAL     "paste Client ID here"
+   #define SPOTIFY_CLIENT_SECRET_VAL "paste Client Secret here"
+   #define SPOTIFY_REFRESH_TOKEN_VAL "paste Refresh Token here"
    ```
 
 ### 4️⃣ Setting Up Spotify
